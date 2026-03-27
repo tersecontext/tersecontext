@@ -1,0 +1,88 @@
+## TerseContext — system overview
+
+TerseContext produces the minimum sufficient context window for an LLM to understand
+and safely modify a codebase. It combines static analysis (AST/graph) with dynamic
+analysis (runtime traces) and serves both to an LLM as a single structured plain-text
+document (~860 tokens vs ~8,400 for a naive file dump).
+
+### Three pipelines
+
+**Static ingestion** (async, event-driven, Python)
+  Repo watcher → Parser → Symbol resolver → Embedder → Graph writer + Vector writer
+
+**Query pipeline** (sync, latency-sensitive, Go + Python)
+  API gateway → Query understander → Dual retriever → Subgraph expander → Serializer
+
+**Dynamic analysis** (scheduled/on-PR, Python)
+  Entrypoint discoverer → Instrumenter → Trace runner →
+  Trace normalizer → Graph enricher + Spec generator
+
+### Shared stores (all internal Docker network, no host exposure except Neo4j + Qdrant UIs)
+
+- Neo4j      bolt://neo4j:7687          knowledge graph
+- Qdrant     http://qdrant:6333         vector store
+- Redis      redis://redis:6379         streams + cache
+- Postgres   postgres:5432 db=tersecontext  BehaviorSpec documents
+
+### Locked decisions — DO NOT change these without team sign-off
+
+stable_id formula:   sha256(repo + ":" + file_path + ":" + node_type + ":" + qualified_name)
+node_hash formula:   sha256(name + signature + body)
+
+Redis Stream keys:
+  stream:file-changed       repo watcher → parser
+  stream:parsed-file        parser → symbol resolver + embedder
+  stream:resolved-graph     symbol resolver → graph writer
+  stream:embedded-nodes     embedder → graph writer + vector writer
+  stream:raw-traces         trace runner → trace normalizer
+  stream:execution-paths    trace normalizer → graph enricher + spec generator
+
+### Every service must implement
+
+GET /health   → 200 {"status":"ok","service":"<name>","version":"0.1.0"}
+GET /ready    → 200 if ready to accept work, 503 if dependencies unreachable
+GET /metrics  → Prometheus text format
+
+### Service ports (internal Docker network uses :8080, host mapping below)
+
+parser              8081
+symbol-resolver     8082
+embedder            8083
+graph-writer        8084
+vector-writer       8085
+query-understander  8086
+dual-retriever      8087  (gRPC)
+subgraph-expander   8088  (gRPC)
+serializer          8089  (gRPC)
+api-gateway         8090  (only port exposed to host)
+repo-watcher        8091
+entrypoint-disc     8092
+instrumenter        8093
+trace-runner        8094
+trace-normalizer    8095
+graph-enricher      8096
+spec-generator      8097
+
+### Contracts location
+
+All JSON schemas live in contracts/ at repo root.
+Events:    contracts/events/
+Requests:  contracts/requests/
+Nodes:     contracts/nodes/
+
+Never invent a schema inline — always reference contracts/.
+If a contract is missing, create it in contracts/ first before using it.
+
+### Language conventions
+
+Python services: FastAPI, Pydantic v2, redis-py, httpx, pytest
+Go services: standard library net/http for health, grpc-go for service calls, testify for tests
+
+### The context document (what this system ultimately produces)
+
+Layer 1: Query header (~50 tok)     — QUERY, SEEDS, CONFIDENCE, REPO
+Layer 2: Warnings (~80 tok)         — CONFLICT, DEAD, STALE — rendered BEFORE the graph
+Layer 3: Node registry (~170 tok)   — short IDs, signatures, provenance pills
+Layer 4: Edge topology (~140 tok)   — flat triples, unannotated = confirmed
+Layer 5: Behaviour (~220 tok)       — execution paths (if spec exists) or code body
+Layer 6: Side effects (~200 tok)    — DB, cache, HTTP, env with hop depth annotations
