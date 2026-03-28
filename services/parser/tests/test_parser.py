@@ -49,3 +49,9 @@ def test_parse_unsupported_language_raises():
     from app.parser import parse
     with pytest.raises(ValueError, match="Unsupported language"):
         parse(b"", "cobol")
+
+
+def test_parse_syntax_error_raises():
+    from app.parser import parse
+    with pytest.raises(SyntaxError):
+        parse(b"def (", "python")
