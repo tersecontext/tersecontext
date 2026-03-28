@@ -169,3 +169,71 @@ def test_calls_edge_detected():
     )
     assert call_edge is not None, "Expected CALLS edge from authenticate to _hash_password"
     assert call_edge.type == "CALLS"
+
+
+# ── Extractor — diff_type filtering ──────────────────────────────────────────
+
+def _make_event(**kwargs) -> "FileChangedEvent":
+    from app.models import FileChangedEvent
+    defaults = dict(
+        repo="repo", commit_sha="abc", path="auth/service.py",
+        language="python", diff_type="full_rescan",
+        changed_nodes=[], added_nodes=[], deleted_nodes=[],
+    )
+    defaults.update(kwargs)
+    return FileChangedEvent(**defaults)
+
+
+def test_full_rescan_emits_all_nodes():
+    from app.parser import parse
+    from app.extractor import extract, apply_diff_filter
+    source = (FIXTURES / "sample.py").read_bytes()
+    nodes, edges = extract(parse(source, "python"), source, "repo", "auth/service.py")
+    event = _make_event(diff_type="full_rescan")
+    fn, fe = apply_diff_filter(nodes, edges, event)
+    assert len(fn) == len(nodes)
+    assert len(fe) == len(edges)
+
+
+def test_added_emits_all_nodes():
+    from app.parser import parse
+    from app.extractor import extract, apply_diff_filter
+    source = (FIXTURES / "sample.py").read_bytes()
+    nodes, edges = extract(parse(source, "python"), source, "repo", "auth/service.py")
+    event = _make_event(diff_type="added")
+    fn, fe = apply_diff_filter(nodes, edges, event)
+    assert len(fn) == len(nodes)
+    assert len(fe) == len(edges)
+
+
+def test_modified_filters_nodes_and_edges():
+    from app.parser import parse
+    from app.extractor import extract, apply_diff_filter
+    source = (FIXTURES / "sample.py").read_bytes()
+    nodes, edges = extract(parse(source, "python"), source, "repo", "auth/service.py")
+    target = nodes[0]
+    event = _make_event(diff_type="modified", changed_nodes=[target.stable_id])
+    fn, fe = apply_diff_filter(nodes, edges, event)
+    assert all(n.stable_id == target.stable_id for n in fn)
+    assert all(e.source_stable_id == target.stable_id for e in fe)
+
+
+def test_deleted_emits_empty_nodes_and_forwards_deleted_nodes():
+    from app.parser import parse
+    from app.extractor import extract, apply_diff_filter
+    from app.models import ParsedFileEvent
+    source = (FIXTURES / "sample.py").read_bytes()
+    nodes, edges = extract(parse(source, "python"), source, "repo", "auth/service.py")
+    deleted = ["sha256:aaa", "sha256:bbb"]
+    event = _make_event(diff_type="deleted", deleted_nodes=deleted)
+    fn, fe = apply_diff_filter(nodes, edges, event)
+    assert fn == []
+    assert fe == []
+    # deleted_nodes are forwarded at the event level (consumer responsibility)
+    # verify the event carries them
+    out = ParsedFileEvent(
+        file_path=event.path, language=event.language, repo=event.repo,
+        commit_sha=event.commit_sha, nodes=fn, intra_file_edges=fe,
+        deleted_nodes=event.deleted_nodes,
+    )
+    assert out.deleted_nodes == deleted
