@@ -97,9 +97,8 @@ def test_extracts_method_nodes_with_parent_id():
 
 
 def test_method_qualified_name_not_in_output():
-    nodes, _, _ = _sample_nodes()
-    for node in nodes:
-        assert not hasattr(node, "qualified_name") or "qualified_name" not in node.model_fields
+    from app.models import ParsedNode
+    assert "qualified_name" not in ParsedNode.model_fields
 
 
 def test_extracts_top_level_function():
@@ -158,3 +157,15 @@ def test_node_hash_changes_when_body_changes():
     fn1 = next(n for n in n1 if n.name == "my_func")
     fn2 = next(n for n in n2 if n.name == "my_func")
     assert fn1.node_hash != fn2.node_hash
+
+
+def test_calls_edge_detected():
+    nodes, edges, _ = _sample_nodes()
+    auth = next(n for n in nodes if n.name == "authenticate")
+    hash_pw = next(n for n in nodes if n.name == "_hash_password")
+    call_edge = next(
+        (e for e in edges if e.source_stable_id == auth.stable_id and e.target_stable_id == hash_pw.stable_id),
+        None,
+    )
+    assert call_edge is not None, "Expected CALLS edge from authenticate to _hash_password"
+    assert call_edge.type == "CALLS"

@@ -73,6 +73,8 @@ def _get_signature(fn_node: Node, source: bytes, name: str) -> str:
 # ── Import name extraction ────────────────────────────────────────────────────
 
 def _get_import_name(node: Node, source: bytes) -> str:
+    # Note: for multi-import statements (e.g. "import os, sys"), only the first
+    # module name is extracted. Each statement produces one import node.
     if node.type == "import_statement":
         name_node = node.child_by_field_name("name")
         if name_node:
@@ -224,15 +226,19 @@ def extract(
 
     # ── CALLS edges ───────────────────────────────────────────────────────────
     edges: list[IntraFileEdge] = []
+    seen_edges: set[tuple[str, str]] = set()
     for pn, ast_node in fn_pairs:
         for called_name in _find_call_names(ast_node):
             target_sid = name_to_sid.get(called_name)
             if target_sid and target_sid != pn.stable_id:
-                edges.append(IntraFileEdge(
-                    source_stable_id=pn.stable_id,
-                    target_stable_id=target_sid,
-                    type="CALLS",
-                ))
+                key = (pn.stable_id, target_sid)
+                if key not in seen_edges:
+                    seen_edges.add(key)
+                    edges.append(IntraFileEdge(
+                        source_stable_id=pn.stable_id,
+                        target_stable_id=target_sid,
+                        type="CALLS",
+                    ))
 
     return nodes, edges
 
@@ -244,7 +250,13 @@ def apply_diff_filter(
     edges: list[IntraFileEdge],
     event: FileChangedEvent,
 ) -> tuple[list[ParsedNode], list[IntraFileEdge]]:
-    """Filter nodes and edges based on diff_type."""
+    """Filter nodes and edges based on diff_type.
+
+    For diff_type='deleted', returns ([], []).
+    IMPORTANT: the caller (consumer) must still emit a ParsedFileEvent with
+    deleted_nodes forwarded unchanged from the input event. Returning ([], [])
+    does NOT mean skip emitting — the graph-writer reads deleted_nodes.
+    """
     if event.diff_type in ("full_rescan", "added"):
         return nodes, edges
     elif event.diff_type == "deleted":
