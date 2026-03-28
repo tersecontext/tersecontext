@@ -22,7 +22,9 @@ def _get_redis() -> redis.Redis:
 
 
 def _process(r: redis.Redis, data: dict) -> None:
-    raw = data.get(b"event") or data.get("event") or b"{}"
+    raw = data.get(b"event") or data.get("event")
+    if raw is None:
+        raise KeyError("message missing 'event' key")
     if isinstance(raw, bytes):
         raw = raw.decode("utf-8")
     event = FileChangedEvent.model_validate_json(raw)
@@ -99,7 +101,7 @@ async def run_consumer() -> None:
     Note: cancelling this coroutine will not stop the background thread immediately —
     _consumer_loop runs until the process exits. This is acceptable for this service.
     """
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     try:
         await loop.run_in_executor(None, _consumer_loop)
     except asyncio.CancelledError:
