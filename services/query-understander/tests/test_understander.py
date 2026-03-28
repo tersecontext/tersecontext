@@ -158,6 +158,23 @@ async def test_understand_retry_on_bad_json():
     assert call_mock.call_args_list[1].kwargs.get("strict") or call_mock.call_args_list[1].args[1]
 
 
+async def test_understand_retry_on_schema_violation():
+    """Ollama returns valid JSON but with invalid schema; second attempt succeeds."""
+    bad_schema = json.dumps({
+        "keywords": ["auth"],
+        "symbols": [],
+        "query_type": "INVALID",
+        "embed_query": "auth flow",
+        "scope": None,
+    })
+    good_json = json.dumps(VALID_OLLAMA_RESPONSE)
+    call_mock = AsyncMock(side_effect=[bad_schema, good_json])
+    with patch("app.understander._call_ollama", new=call_mock):
+        intent, from_ollama = await understand("how does authentication work")
+    assert from_ollama is True
+    assert call_mock.call_count == 2
+
+
 async def test_understand_fallback_on_double_failure():
     """Both Ollama attempts fail; fallback keyword extraction is used."""
     call_mock = AsyncMock(side_effect=Exception("connection refused"))

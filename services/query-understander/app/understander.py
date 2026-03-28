@@ -96,6 +96,7 @@ async def understand(question: str) -> tuple[QueryIntent, bool]:
         intent = _parse_response(raw, question)
         if intent:
             return intent, True
+        logger.warning("Ollama first attempt returned unparseable response")
     except Exception as exc:
         logger.warning("Ollama first attempt failed: %s", exc)
 
@@ -105,6 +106,7 @@ async def understand(question: str) -> tuple[QueryIntent, bool]:
         intent = _parse_response(raw, question)
         if intent:
             return intent, True
+        logger.warning("Ollama retry returned unparseable response")
     except Exception as exc:
         logger.warning("Ollama retry failed: %s", exc)
 
