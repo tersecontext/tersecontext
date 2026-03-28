@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 async def _check_ollama(base_url: str) -> bool:
     delays = [1, 2, 4, 8, 16]
-    for delay in delays:
+    for i, delay in enumerate(delays):
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
                 resp = await client.get(f"{base_url}/api/tags")
@@ -26,7 +26,8 @@ async def _check_ollama(base_url: str) -> bool:
                     return True
         except Exception:
             pass
-        await asyncio.sleep(delay)
+        if i < len(delays) - 1:
+            await asyncio.sleep(delay)
     return False
 
 
@@ -36,14 +37,15 @@ async def lifespan(app: FastAPI):
     llm_base_url = os.getenv("LLM_BASE_URL", "http://ollama:11434")
 
     app.state.redis = aioredis.from_url(redis_url, decode_responses=True)
-    app.state.ollama_ready = await _check_ollama(llm_base_url)
+    try:
+        app.state.ollama_ready = await _check_ollama(llm_base_url)
 
-    if not app.state.ollama_ready:
-        logger.warning("Ollama unreachable at startup — running in fallback mode")
+        if not app.state.ollama_ready:
+            logger.warning("Ollama unreachable at startup — running in fallback mode")
 
-    yield
-
-    await app.state.redis.aclose()
+        yield
+    finally:
+        await app.state.redis.aclose()
 
 
 app = FastAPI(title="query-understander", version="0.1.0", lifespan=lifespan)
