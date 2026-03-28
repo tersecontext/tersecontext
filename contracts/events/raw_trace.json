@@ -1,0 +1,29 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "events/raw_trace",
+  "title": "RawTrace",
+  "type": "object",
+  "required": ["entrypoint_stable_id", "commit_sha", "duration_ms", "events"],
+  "additionalProperties": false,
+  "properties": {
+    "entrypoint_stable_id": { "type": "string" },
+    "commit_sha":           { "type": "string" },
+    "duration_ms":          { "type": "number" },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["type", "fn", "file", "line", "timestamp_ms"],
+        "additionalProperties": false,
+        "properties": {
+          "type":         { "type": "string", "enum": ["call", "return", "exception"] },
+          "fn":           { "type": "string" },
+          "file":         { "type": "string" },
+          "line":         { "type": "integer" },
+          "timestamp_ms": { "type": "number" },
+          "exc_type":     { "type": "string" }
+        }
+      }
+    }
+  }
+}

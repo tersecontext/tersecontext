@@ -207,35 +207,32 @@ marimo/_lsp/
 __marimo__/
 
 # ── Go ────────────────────────────────────────────
-# binaries (Go outputs a binary named after the module)
-/services/gateway/gateway
-/services/retriever/retriever
-/services/expander/expander
-/services/serializer/serializer
+# service binaries
+services/*/bin/
+services/*/*.exe
 
-# go workspace (local dev only, not committed)
-go.work
+# go workspace sum (derived; go.work itself is committed)
 go.work.sum
 
 # test cache
 /tmp/
 
 # ── Proto generated files ─────────────────────────
-# generated code is derived — regenerate from .proto
-proto/gen/
+# generated code is derived — regenerate with: make proto
+services/dual-retriever/gen/
+services/query-understander/gen/
 
 # ── Infrastructure / local dev ────────────────────
 # docker volumes mounted locally
 .docker/
 
-# Neo4j local data
-data/neo4j/
-
-# Qdrant local data  
-data/qdrant/
-
-# Redis local data
-data/redis/
+# local store volumes — data is ephemeral, keep .gitkeep sentinels only
+data/neo4j/*
+data/qdrant/*
+data/redis/*
+data/postgres/*
+data/ollama/*
+!data/**/.gitkeep
 
 # ── Environment / secrets ─────────────────────────
 # covers .env, .env.local, .env.development etc

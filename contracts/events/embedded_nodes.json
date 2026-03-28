@@ -1,0 +1,26 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "events/embedded_nodes",
+  "title": "EmbeddedNodes",
+  "type": "object",
+  "required": ["repo", "commit_sha", "nodes"],
+  "additionalProperties": false,
+  "properties": {
+    "repo":       { "type": "string" },
+    "commit_sha": { "type": "string" },
+    "nodes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["stable_id", "vector", "embed_text", "node_hash"],
+        "additionalProperties": false,
+        "properties": {
+          "stable_id":  { "type": "string" },
+          "vector":     { "type": "array", "items": { "type": "number" } },
+          "embed_text": { "type": "string" },
+          "node_hash":  { "type": "string" }
+        }
+      }
+    }
+  }
+}

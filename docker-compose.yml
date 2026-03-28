@@ -1,0 +1,122 @@
+networks:
+  tersecontext:
+    driver: bridge
+
+volumes:
+  neo4j_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./data/neo4j
+  qdrant_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./data/qdrant
+  redis_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./data/redis
+  postgres_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./data/postgres
+  ollama_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./data/ollama
+
+services:
+  neo4j:
+    image: neo4j:5
+    environment:
+      NEO4J_AUTH: neo4j/localpassword
+      NEO4J_PLUGINS: '["apoc"]'
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    volumes:
+      - neo4j_data:/data
+      - ./docker/neo4j-init.cypher:/startup/neo4j-init.cypher:ro
+    networks:
+      - tersecontext
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:7474"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  qdrant:
+    image: qdrant/qdrant
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    networks:
+      - tersecontext
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:6333/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7
+    volumes:
+      - redis_data:/data
+    networks:
+      - tersecontext
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: tersecontext
+      POSTGRES_USER: tersecontext
+      POSTGRES_PASSWORD: localpassword
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - tersecontext
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tersecontext"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  ollama:
+    image: ollama/ollama
+    ports:
+      - "127.0.0.1:11435:11434"  # host Ollama already owns 11434; reach this one at :11435
+    volumes:
+      - ollama_data:/root/.ollama
+    networks:
+      - tersecontext
+
+  # One-shot init: waits for Neo4j to be healthy then applies constraints/indexes.
+  # Exits 0 on success; docker-compose marks it as exited (not a failure).
+  neo4j-init:
+    image: neo4j:5
+    depends_on:
+      neo4j:
+        condition: service_healthy
+    entrypoint: >
+      bash -c "cypher-shell -u neo4j -p localpassword -a bolt://neo4j:7687
+      < /startup/neo4j-init.cypher && echo 'neo4j-init: done'"
+    volumes:
+      - ./docker/neo4j-init.cypher:/startup/neo4j-init.cypher:ro
+    networks:
+      - tersecontext
+    restart: "no"

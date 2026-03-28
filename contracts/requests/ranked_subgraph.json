@@ -1,0 +1,66 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "requests/ranked_subgraph",
+  "title": "RankedSubgraph",
+  "type": "object",
+  "required": ["nodes", "edges", "warnings", "budget_used", "total_candidates"],
+  "additionalProperties": false,
+  "properties": {
+    "nodes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["stable_id", "name", "type", "signature", "docstring", "score", "hop", "provenance"],
+        "additionalProperties": false,
+        "properties": {
+          "stable_id":        { "type": "string" },
+          "name":             { "type": "string" },
+          "type":             { "type": "string" },
+          "signature":        { "type": "string" },
+          "docstring":        { "type": "string" },
+          "body":             { "type": "string" },
+          "score":            { "type": "number" },
+          "hop":              { "type": "integer" },
+          "provenance":       { "type": "string", "enum": ["static", "dynamic", "confirmed", "conflict"] },
+          "observed_calls":   { "type": "integer" },
+          "avg_latency_ms":   { "type": "number" },
+          "branch_coverage":  { "type": "number" },
+          "raises_observed":  { "type": "array", "items": { "type": "string" } },
+          "side_effects":     { "type": "array", "items": { "type": "string" } },
+          "behavior_spec":    { "type": "string" }
+        }
+      }
+    },
+    "edges": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["source", "target", "type", "provenance"],
+        "additionalProperties": false,
+        "properties": {
+          "source":           { "type": "string" },
+          "target":           { "type": "string" },
+          "type":             { "type": "string" },
+          "provenance":       { "type": "string", "enum": ["static", "dynamic", "confirmed", "conflict"] },
+          "frequency_ratio":  { "type": "number" }
+        }
+      }
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["type", "source", "target", "detail"],
+        "additionalProperties": false,
+        "properties": {
+          "type":   { "type": "string", "enum": ["CONFLICT", "DEAD", "STALE"] },
+          "source": { "type": "string" },
+          "target": { "type": "string" },
+          "detail": { "type": "string" }
+        }
+      }
+    },
+    "budget_used":       { "type": "integer" },
+    "total_candidates":  { "type": "integer" }
+  }
+}

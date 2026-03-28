@@ -1,0 +1,65 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "events/execution_path",
+  "title": "ExecutionPath",
+  "type": "object",
+  "required": ["entrypoint_stable_id", "commit_sha", "call_sequence", "side_effects", "dynamic_only_edges", "never_observed_static_edges", "timing_p50_ms", "timing_p99_ms"],
+  "additionalProperties": false,
+  "properties": {
+    "entrypoint_stable_id": { "type": "string" },
+    "commit_sha":           { "type": "string" },
+    "call_sequence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["stable_id", "hop", "frequency_ratio", "avg_ms"],
+        "additionalProperties": false,
+        "properties": {
+          "stable_id":       { "type": "string" },
+          "hop":             { "type": "integer" },
+          "frequency_ratio": { "type": "number" },
+          "avg_ms":          { "type": "number" }
+        }
+      }
+    },
+    "side_effects": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["type", "detail", "hop_depth"],
+        "additionalProperties": false,
+        "properties": {
+          "type":      { "type": "string", "enum": ["db_read", "db_write", "cache_read", "cache_set", "http_out", "fs_write"] },
+          "detail":    { "type": "string" },
+          "hop_depth": { "type": "integer" }
+        }
+      }
+    },
+    "dynamic_only_edges": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["source", "target"],
+        "additionalProperties": false,
+        "properties": {
+          "source": { "type": "string" },
+          "target": { "type": "string" }
+        }
+      }
+    },
+    "never_observed_static_edges": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["source", "target"],
+        "additionalProperties": false,
+        "properties": {
+          "source": { "type": "string" },
+          "target": { "type": "string" }
+        }
+      }
+    },
+    "timing_p50_ms": { "type": "number" },
+    "timing_p99_ms": { "type": "number" }
+  }
+}
