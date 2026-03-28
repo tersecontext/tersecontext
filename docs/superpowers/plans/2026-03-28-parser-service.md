@@ -18,6 +18,7 @@
 - `qualified_name` is internal only — do NOT emit it in `ParsedNode`
 - Import nodes have `body` = raw source slice (not empty string)
 - `diff_type=deleted` DOES emit a `ParsedFileEvent` (not suppressed)
+- Use `tree-sitter-python` (per-language package, tree-sitter 0.23+ API) — NOT `tree_sitter_languages` (the old bundled package). User explicitly chose `tree-sitter-python` for better Python 3.12 compatibility.
 
 ---
 
