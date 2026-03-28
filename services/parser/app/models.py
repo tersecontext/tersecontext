@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Optional
+from typing import Literal, Optional
 from pydantic import BaseModel
 
 
@@ -8,7 +8,7 @@ class FileChangedEvent(BaseModel):
     commit_sha: str
     path: str
     language: str
-    diff_type: str  # added | modified | deleted | full_rescan
+    diff_type: Literal["added", "modified", "deleted", "full_rescan"]
     changed_nodes: list[str]
     added_nodes: list[str]
     deleted_nodes: list[str]
@@ -30,7 +30,7 @@ class ParsedNode(BaseModel):
 class IntraFileEdge(BaseModel):
     source_stable_id: str
     target_stable_id: str
-    type: str  # CALLS
+    type: Literal["CALLS"]
 
 
 class ParsedFileEvent(BaseModel):
