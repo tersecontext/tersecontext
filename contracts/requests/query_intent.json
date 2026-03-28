@@ -1,0 +1,16 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "requests/query_intent",
+  "title": "QueryIntent",
+  "type": "object",
+  "required": ["raw_query", "keywords", "symbols", "query_type", "embed_query"],
+  "additionalProperties": false,
+  "properties": {
+    "raw_query":   { "type": "string" },
+    "keywords":    { "type": "array", "items": { "type": "string" } },
+    "symbols":     { "type": "array", "items": { "type": "string" } },
+    "query_type":  { "type": "string", "enum": ["lookup", "flow", "impact"] },
+    "embed_query": { "type": "string" },
+    "scope":       { "type": "string" }
+  }
+}
