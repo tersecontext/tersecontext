@@ -1,7 +1,15 @@
+import json
 import pytest
 from pydantic import ValidationError
+from unittest.mock import AsyncMock, patch
 
+import fakeredis.aioredis
+from fastapi.testclient import TestClient
+
+from app.cache import cache_get, cache_set, _make_key
+from app.main import app
 from app.models import QueryIntent, UnderstandRequest
+from app.understander import understand, _fallback_intent
 
 
 def test_query_intent_valid():
@@ -34,9 +42,7 @@ def test_understand_request_valid():
     assert req.repo == "acme-api"
 
 
-import hashlib
-from app.cache import cache_get, cache_set, _make_key
-
+# --- Cache tests ---
 
 SAMPLE_INTENT = QueryIntent(
     raw_query="how does auth work",
@@ -88,11 +94,7 @@ async def test_cache_respects_ttl(fake_redis):
     assert ttl > 0
 
 
-import json
-from unittest.mock import AsyncMock, patch
-
-from app.understander import understand, _fallback_intent
-
+# --- Understander tests ---
 
 VALID_OLLAMA_RESPONSE = {
     "keywords": ["auth", "authenticate", "login", "jwt", "token"],
@@ -212,10 +214,7 @@ def test_fallback_returns_valid_intent():
     assert intent.symbols == []
 
 
-import fakeredis.aioredis
-from fastapi.testclient import TestClient
-
-from app.main import app
+# --- FastAPI endpoint tests ---
 
 FLOW_INTENT = QueryIntent(
     raw_query="how does authentication work",
