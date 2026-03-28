@@ -86,3 +86,110 @@ async def test_cache_respects_ttl(fake_redis):
     key = _make_key("q", "repo")
     ttl = await fake_redis.ttl(key)
     assert ttl > 0
+
+
+import json
+from unittest.mock import AsyncMock, patch
+
+from app.understander import understand, _fallback_intent
+
+
+VALID_OLLAMA_RESPONSE = {
+    "keywords": ["auth", "authenticate", "login", "jwt", "token"],
+    "symbols": ["AuthService", "authenticate"],
+    "query_type": "flow",
+    "embed_query": "authentication flow login jwt token verification user credentials",
+    "scope": None,
+}
+
+LOOKUP_RESPONSE = {
+    "keywords": ["jwt", "config", "configure"],
+    "symbols": ["JWTConfig"],
+    "query_type": "lookup",
+    "embed_query": "JWT configuration setup options settings location",
+    "scope": None,
+}
+
+IMPACT_RESPONSE = {
+    "keywords": ["authenticate", "break", "change"],
+    "symbols": ["authenticate"],
+    "query_type": "impact",
+    "embed_query": "authenticate function callers dependents breaking changes side effects",
+    "scope": None,
+}
+
+
+async def test_understand_ollama_success():
+    raw_json = json.dumps(VALID_OLLAMA_RESPONSE)
+    with patch("app.understander._call_ollama", new=AsyncMock(return_value=raw_json)):
+        intent, from_ollama = await understand("how does authentication work")
+    assert from_ollama is True
+    assert intent.query_type == "flow"
+    assert intent.raw_query == "how does authentication work"
+    assert len(intent.embed_query) > len("how does authentication work")
+
+
+async def test_understand_lookup_query_type():
+    raw_json = json.dumps(LOOKUP_RESPONSE)
+    with patch("app.understander._call_ollama", new=AsyncMock(return_value=raw_json)):
+        intent, from_ollama = await understand("where is JWT configured")
+    assert from_ollama is True
+    assert intent.query_type == "lookup"
+
+
+async def test_understand_impact_query_type():
+    raw_json = json.dumps(IMPACT_RESPONSE)
+    with patch("app.understander._call_ollama", new=AsyncMock(return_value=raw_json)):
+        intent, from_ollama = await understand("what breaks if I change authenticate")
+    assert from_ollama is True
+    assert intent.query_type == "impact"
+    assert "authenticate" in intent.symbols
+
+
+async def test_understand_retry_on_bad_json():
+    """First Ollama response is invalid JSON; second (strict prompt) is valid."""
+    good_json = json.dumps(VALID_OLLAMA_RESPONSE)
+    call_mock = AsyncMock(side_effect=["not valid json", good_json])
+    with patch("app.understander._call_ollama", new=call_mock):
+        intent, from_ollama = await understand("how does authentication work")
+    assert from_ollama is True
+    assert call_mock.call_count == 2
+    # Second call uses strict=True
+    assert call_mock.call_args_list[1].kwargs.get("strict") or call_mock.call_args_list[1].args[1]
+
+
+async def test_understand_fallback_on_double_failure():
+    """Both Ollama attempts fail; fallback keyword extraction is used."""
+    call_mock = AsyncMock(side_effect=Exception("connection refused"))
+    with patch("app.understander._call_ollama", new=call_mock):
+        intent, from_ollama = await understand("how does authentication work")
+    assert from_ollama is False
+    assert intent.query_type == "flow"
+    assert intent.raw_query == "how does authentication work"
+    assert isinstance(intent.keywords, list)
+    assert len(intent.keywords) > 0
+
+
+async def test_understand_fallback_on_invalid_json_twice():
+    """Both Ollama responses are invalid JSON; fallback is used."""
+    call_mock = AsyncMock(return_value="{ invalid }")
+    with patch("app.understander._call_ollama", new=call_mock):
+        intent, from_ollama = await understand("how does authentication work")
+    assert from_ollama is False
+    assert intent.query_type == "flow"
+
+
+def test_fallback_filters_stop_words():
+    intent = _fallback_intent("how does authentication work in the system")
+    # "how", "does", "in", "the" are stop words and should be filtered
+    assert "how" not in intent.keywords
+    assert "does" not in intent.keywords
+    assert "the" not in intent.keywords
+    assert "authentication" in intent.keywords
+
+
+def test_fallback_returns_valid_intent():
+    intent = _fallback_intent("what breaks if I change authenticate")
+    assert intent.query_type == "flow"
+    assert intent.embed_query == "what breaks if I change authenticate"
+    assert intent.symbols == []
