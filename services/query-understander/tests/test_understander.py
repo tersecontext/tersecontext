@@ -210,3 +210,109 @@ def test_fallback_returns_valid_intent():
     assert intent.query_type == "flow"
     assert intent.embed_query == "what breaks if I change authenticate"
     assert intent.symbols == []
+
+
+import fakeredis.aioredis
+from fastapi.testclient import TestClient
+
+from app.main import app
+
+FLOW_INTENT = QueryIntent(
+    raw_query="how does authentication work",
+    keywords=["auth", "login", "jwt"],
+    symbols=["AuthService"],
+    query_type="flow",
+    embed_query="authentication flow login jwt token verification user credentials",
+    scope=None,
+)
+
+
+@pytest.fixture
+def client_with_ollama():
+    """TestClient with Ollama reachable and fakeredis."""
+    fake_redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
+    with patch("app.main._check_ollama", new=AsyncMock(return_value=True)):
+        with patch("app.main.aioredis.from_url", return_value=fake_redis):
+            with TestClient(app) as client:
+                yield client, fake_redis
+
+
+@pytest.fixture
+def client_no_ollama():
+    """TestClient with Ollama unreachable."""
+    fake_redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
+    with patch("app.main._check_ollama", new=AsyncMock(return_value=False)):
+        with patch("app.main.aioredis.from_url", return_value=fake_redis):
+            with TestClient(app) as client:
+                yield client
+
+
+def test_health(client_with_ollama):
+    client, _ = client_with_ollama
+    resp = client.get("/health")
+    assert resp.status_code == 200
+    assert resp.json() == {"status": "ok", "service": "query-understander", "version": "0.1.0"}
+
+
+def test_ready_when_ollama_up(client_with_ollama):
+    client, _ = client_with_ollama
+    resp = client.get("/ready")
+    assert resp.status_code == 200
+
+
+def test_ready_when_ollama_down(client_no_ollama):
+    resp = client_no_ollama.get("/ready")
+    assert resp.status_code == 503
+
+
+def test_understand_success(client_with_ollama):
+    client, _ = client_with_ollama
+    with patch("app.main.understand", new=AsyncMock(return_value=(FLOW_INTENT, True))):
+        resp = client.post("/understand", json={"question": "how does authentication work", "repo": "acme-api"})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["query_type"] == "flow"
+    assert data["raw_query"] == "how does authentication work"
+    assert len(data["embed_query"]) > len("how does authentication work")
+
+
+def test_understand_caches_ollama_result(client_with_ollama):
+    client, fake_redis = client_with_ollama
+    call_count = 0
+
+    async def mock_understand(question):
+        nonlocal call_count
+        call_count += 1
+        return FLOW_INTENT, True
+
+    with patch("app.main.understand", new=mock_understand):
+        client.post("/understand", json={"question": "how does authentication work", "repo": "acme-api"})
+        client.post("/understand", json={"question": "how does authentication work", "repo": "acme-api"})
+
+    # understand() should only be called once — second request is served from cache
+    assert call_count == 1
+
+
+def test_understand_does_not_cache_fallback(client_with_ollama):
+    client, fake_redis = client_with_ollama
+    fallback_intent = QueryIntent(
+        raw_query="how does authentication work",
+        keywords=["authentication"],
+        symbols=[],
+        query_type="flow",
+        embed_query="how does authentication work",
+        scope=None,
+    )
+    call_count = 0
+
+    async def mock_understand(question):
+        nonlocal call_count
+        call_count += 1
+        return fallback_intent, False  # is_ollama_success=False
+
+    with patch("app.main.understand", new=mock_understand):
+        client.post("/understand", json={"question": "how does authentication work", "repo": "acme-api"})
+        client.post("/understand", json={"question": "how does authentication work", "repo": "acme-api"})
+
+    # understand() called twice — fallback result was not cached
+    assert call_count == 2
