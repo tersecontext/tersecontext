@@ -34,3 +34,18 @@ def test_parsed_file_event_has_deleted_nodes():
         deleted_nodes=["sha256:x"],
     )
     assert evt.deleted_nodes == ["sha256:x"]
+
+
+# ── Parser ────────────────────────────────────────────────────────────────────
+
+def test_parse_python_returns_root_node():
+    from app.parser import parse
+    source = b"def foo(): pass\n"
+    root = parse(source, "python")
+    assert root.type == "module"
+
+
+def test_parse_unsupported_language_raises():
+    from app.parser import parse
+    with pytest.raises(ValueError, match="Unsupported language"):
+        parse(b"", "cobol")
