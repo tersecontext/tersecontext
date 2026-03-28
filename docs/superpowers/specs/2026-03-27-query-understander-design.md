@@ -7,6 +7,8 @@
 
 ## Purpose
 
+**Language:** Python 3.12
+
 First service in the TerseContext query pipeline. Accepts a raw natural language question and returns a structured `QueryIntent` that the dual retriever can act on precisely. Calls a local Ollama instance for parsing. Most important output is `embed_query` — a semantically enriched rewrite that produces better vector search results than the raw question.
 
 **Reads:** Redis (cache), Ollama HTTP API
@@ -60,7 +62,7 @@ services/query-understander/
 | Method | Path | Description |
 |--------|------|-------------|
 | POST | /understand | Main endpoint — returns QueryIntent |
-| GET | /health | Always 200 while process is alive |
+| GET | /health | Always 200 while process is alive — response: `{"status":"ok","service":"query-understander","version":"0.1.0"}` |
 | GET | /ready | 200 if Ollama reachable, 503 otherwise |
 | GET | /metrics | Prometheus metrics (request count, latency) |
 
@@ -81,6 +83,7 @@ POST /understand
      → parse response as JSON
      → validate against QueryIntent schema
   3. on parse/validation failure: retry once with stricter prompt
+     (append to prompt: "You must return only a JSON object. Any other output is invalid.")
   4. on second failure: fallback
      → split question on spaces, filter stop words → keywords
      → symbols = []
@@ -99,6 +102,7 @@ Cache is only written on successful Ollama responses, not after fallback.
 **Env vars:**
 - `LLM_BASE_URL` — default `http://ollama:11434`
 - `LLM_MODEL` — default `qwen2.5-coder:7b`
+- `REDIS_URL` — default `redis://localhost:6379`
 
 **Prompt template:**
 
@@ -142,6 +146,7 @@ On startup (FastAPI lifespan), check `LLM_BASE_URL/api/tags`:
 - Retry with exponential backoff: 1s, 2s, 4s, 8s, 16s (5 attempts)
 - If all fail: set `ollama_ready = False`, log warning, service starts
 - `/ready` returns 503 while `ollama_ready = False`
+- `ollama_ready` is set once at startup and is not re-checked automatically. The flag only changes back to `True` if the service is restarted. If Ollama recovers, restart the service.
 - Fallback mode still works — keyword extraction only
 
 ---
