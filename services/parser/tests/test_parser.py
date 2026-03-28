@@ -237,3 +237,49 @@ def test_deleted_emits_empty_nodes_and_forwards_deleted_nodes():
         deleted_nodes=event.deleted_nodes,
     )
     assert out.deleted_nodes == deleted
+
+
+# ── FastAPI endpoints ──────────────────────────────────────────────────────────
+
+from unittest.mock import patch
+
+
+def _make_test_client():
+    from httpx import AsyncClient, ASGITransport
+    from app.main import app
+    return AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
+
+
+def test_health_returns_200():
+    import asyncio
+    async def _run():
+        async with _make_test_client() as client:
+            r = await client.get("/health")
+            assert r.status_code == 200
+            body = r.json()
+            assert body["status"] == "ok"
+            assert body["service"] == "parser"
+            assert body["version"] == "0.1.0"
+    asyncio.run(_run())
+
+
+def test_ready_returns_503_when_redis_unreachable():
+    import asyncio
+    async def _run():
+        with patch("app.main._get_redis") as mock_redis:
+            mock_redis.return_value.ping.side_effect = Exception("refused")
+            async with _make_test_client() as client:
+                r = await client.get("/ready")
+                assert r.status_code == 503
+    asyncio.run(_run())
+
+
+def test_ready_returns_200_when_redis_reachable():
+    import asyncio
+    async def _run():
+        with patch("app.main._get_redis") as mock_redis:
+            mock_redis.return_value.ping.return_value = True
+            async with _make_test_client() as client:
+                r = await client.get("/ready")
+                assert r.status_code == 200
+    asyncio.run(_run())
