@@ -25,6 +25,8 @@ The consumer is **fully async** — uses `redis.asyncio`, async embedding provid
 
 Neo4j hash lookups use a single **`UNWIND` batch query** per ParsedFile event rather than one query per node, reducing round-trips from N to 1.
 
+`neo4j_client.py` is added as an intentional module beyond the minimal file list in CLAUDE.md. It keeps Neo4j I/O isolated from the pure-logic `embedder.py`, which simplifies testing.
+
 ---
 
 ## Data Flow
@@ -54,7 +56,7 @@ consumer.py  ─── for each message:
 - If all nodes are unchanged → emit `EmbeddedNodes` with `nodes: []` (not suppressed)
 - XACK only after successful XADD
 - On embedding failure: log, do NOT XACK (allow retry)
-- On malformed JSON: log, XACK (bad message, retrying is pointless)
+- On malformed JSON: log, XACK (bad message; retrying cannot fix corrupt data)
 
 ---
 
@@ -84,12 +86,14 @@ services/embedder/
 
 ### `models.py`
 
-Pydantic models matching the JSON contracts exactly:
+Pydantic models. `ParsedFileEvent` uses `model_config = ConfigDict(extra="ignore")` so extra fields in the stream (e.g. `deleted_nodes` emitted by the parser but absent from the formal JSON contract) are silently dropped rather than causing a validation error.
 
-- `ParsedNode` — `stable_id`, `node_hash`, `name`, `signature`, `docstring`, `body`, `type`, `line_start`, `line_end`, `parent_id`
-- `ParsedFileEvent` — `repo`, `commit_sha`, `file_path`, `language`, `nodes`, `intra_file_edges`, `deleted_nodes`
+- `ParsedNode` — `stable_id`, `node_hash`, `name`, `signature`, `docstring: str` (empty string `""` when absent — never `None`), `body`, `type`, `line_start`, `line_end`, `parent_id: Optional[str]`
+- `ParsedFileEvent` — `repo`, `commit_sha`, `file_path`, `language`, `nodes`, `intra_file_edges`
 - `EmbeddedNode` — `stable_id`, `vector`, `embed_text`, `node_hash`
 - `EmbeddedNodesEvent` — `repo`, `commit_sha`, `nodes`
+
+> **`docstring` is always a string, never `None`.** The Pydantic field uses `str` with default `""`. The `build_embed_text` check `if node.docstring:` relies on this — an empty string is falsy, `None` would break the check silently.
 
 ### `providers/base.py`
 
@@ -100,27 +104,45 @@ class EmbeddingProvider:
 
 ### `providers/ollama.py`
 
-- POSTs to `{OLLAMA_URL}/api/embed` using `httpx.AsyncClient`
-- Model defaults to `nomic-embed-text`
-- Returns list of float vectors
+POSTs to `{OLLAMA_URL}/api/embed` using `httpx.AsyncClient`.
+
+Request body:
+```json
+{"model": "nomic-embed-text", "input": ["text1", "text2"]}
+```
+
+Response — extract vectors from `response["embeddings"]` (list of float lists, one per input).
+
+Model defaults to `nomic-embed-text`.
 
 ### `providers/voyage.py`
 
-- POSTs to Voyage AI REST API with `Authorization: Bearer {VOYAGE_API_KEY}`
+POSTs to `https://api.voyageai.com/v1/embeddings` with `Authorization: Bearer {VOYAGE_API_KEY}`.
+
+Request body:
+```json
+{"model": "voyage-code-3", "input": ["text1", "text2"]}
+```
+
+Response — extract vectors from `response["data"][i]["embedding"]` for each `i`.
+
 - Raises `ValueError` at `__init__` if `VOYAGE_API_KEY` is not set
 - Model defaults to `voyage-code-3`
 
 ### `neo4j_client.py`
 
-- Wraps `neo4j.GraphDatabase.driver` (sync bolt driver)
-- Single method: `async def get_node_hashes(stable_ids: list[str]) -> dict[str, str]`
-- Runs one Cypher query via `loop.run_in_executor`:
-  ```cypher
-  UNWIND $ids AS id
-  MATCH (n:Node {stable_id: id})
-  RETURN n.stable_id AS stable_id, n.node_hash AS node_hash
-  ```
-- Returns `{stable_id: node_hash}` for all known nodes; absent = new node
+Wraps `neo4j.GraphDatabase.driver` (sync bolt driver). The `node_hash` property is stored on `:Node` nodes but is not indexed — this is acceptable because the `stable_id` unique constraint ensures O(1) lookup; `node_hash` is just a property read on the matched node.
+
+Single method: `async def get_node_hashes(stable_ids: list[str]) -> dict[str, str]`
+
+Runs one Cypher query via `loop.run_in_executor`:
+```cypher
+UNWIND $ids AS id
+MATCH (n:Node {stable_id: id})
+RETURN n.stable_id AS stable_id, n.node_hash AS node_hash
+```
+
+Returns `{stable_id: node_hash}` for all known nodes; absent entries = new nodes (embed them).
 
 ### `embedder.py`
 
@@ -141,11 +163,14 @@ async def embed_nodes(
     provider: EmbeddingProvider,
     batch_size: int = 64,
 ) -> list[EmbeddedNode]:
-    # filter unchanged
-    # build embed_texts
-    # chunk into batches, call provider sequentially
+    # filter unchanged (skip if node.node_hash == neo4j_cache.get(node.stable_id))
+    # build embed_texts for remaining nodes
+    # chunk into batches of batch_size, call provider.embed() sequentially
+    # assert len(vector) == EMBEDDING_DIM for each returned vector
     # return EmbeddedNode list
 ```
+
+`EMBEDDING_DIM` is used for **validation**: after each batch, assert every returned vector has `len(vector) == EMBEDDING_DIM`. Raise `ValueError` if a vector has the wrong dimension. This catches misconfigured models early.
 
 ### `consumer.py`
 
@@ -153,14 +178,15 @@ async def embed_nodes(
 - Consumer group: `embedder-group`
 - Consumer name: `embedder-{socket.gethostname()}`
 - XREADGROUP → `_process()` → XADD → XACK
-- On exception: log, skip XACK
+- On embedding exception or XADD failure: log, skip XACK (allow retry)
+- On JSON parse failure: log warning, XACK (bad message; do not retry)
 
 ### `main.py`
 
 FastAPI with lifespan context manager:
 
 - `GET /health` → `{"status": "ok", "service": "embedder", "version": "0.1.0"}`
-- `GET /ready` → 200 if Redis ping + Neo4j verify succeed, 503 otherwise
+- `GET /ready` → 200 if Redis ping + Neo4j `verify_connectivity()` succeed, 503 otherwise
 - `GET /metrics` → Prometheus-format text stub
 - Consumer started as `asyncio.create_task` on startup
 
@@ -191,7 +217,7 @@ Body is **never** included — it degrades embedding quality by diluting semanti
 | `EMBEDDING_PROVIDER` | `ollama` | `"ollama"` or `"voyage"` |
 | `OLLAMA_URL` | `http://ollama:11434` | Ollama base URL |
 | `EMBEDDING_MODEL` | provider default | Override model name |
-| `EMBEDDING_DIM` | `768` (ollama) / `1024` (voyage) | Expected vector dimension |
+| `EMBEDDING_DIM` | `768` (ollama) / `1024` (voyage) | Expected vector dimension; used to validate returned vectors |
 | `VOYAGE_API_KEY` | — | Required if provider=voyage |
 | `BATCH_SIZE` | `64` | Nodes per embedding API call |
 
@@ -201,9 +227,10 @@ Body is **never** included — it degrades embedding quality by diluting semanti
 
 | Scenario | Behaviour |
 |---|---|
-| Neo4j unreachable | Log error, treat all nodes as new (embed everything), continue |
+| Neo4j unreachable | Log **warning** with detail (so operators can detect degraded mode), treat all nodes as new (embed everything), continue. Accepted trade-off: downstream will re-upsert all nodes, which is idempotent. |
 | Embedding API fails | Log error, do NOT XACK (retry on next poll) |
-| Malformed event JSON | Log error, XACK (bad message, retrying is pointless) |
+| Wrong vector dimension returned | Raise `ValueError`, do NOT XACK |
+| Malformed event JSON | Log warning, XACK (bad message; retrying cannot fix corrupt data) |
 | Empty nodes list | Emit `EmbeddedNodes` with `nodes: []`, XACK normally |
 | Missing `VOYAGE_API_KEY` when provider=voyage | Raise `ValueError` at startup |
 
@@ -215,16 +242,19 @@ All tests in `tests/test_embedder.py`. No live services — providers and Neo4j 
 
 | # | Test |
 |---|---|
-| 1 | `build_embed_text` — name + signature only when no docstring |
-| 2 | `build_embed_text` — appends docstring when present |
+| 1 | `build_embed_text` — name + signature only when docstring is `""` |
+| 2 | `build_embed_text` — appends docstring when non-empty |
 | 3 | `build_embed_text` — never includes body |
 | 4 | Batching — 130 nodes → 3 provider calls (64+64+2) |
 | 5 | Skip unchanged — nodes whose hash matches cache excluded from output |
 | 6 | New nodes (absent from cache) always embedded |
 | 7 | All nodes unchanged → `EmbeddedNodes.nodes` is `[]` |
-| 8 | `OllamaProvider` satisfies `EmbeddingProvider` interface |
-| 9 | `VoyageProvider` satisfies `EmbeddingProvider` interface |
-| 10 | `VoyageProvider` raises `ValueError` at init if `VOYAGE_API_KEY` missing |
+| 8 | Neo4j unreachable — all nodes treated as new (embed everything) |
+| 9 | `OllamaProvider` satisfies `EmbeddingProvider` interface (instantiation check) |
+| 10 | `VoyageProvider` satisfies `EmbeddingProvider` interface (instantiation check) |
+| 11 | `VoyageProvider` raises `ValueError` at init if `VOYAGE_API_KEY` missing |
+
+> **Consumer XACK policy** (malformed JSON → XACK; embedding failure → no XACK) is integration-level behaviour verified manually via the verification scripts in CLAUDE.md, not unit tested here.
 
 ---
 
