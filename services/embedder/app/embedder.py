@@ -1,4 +1,3 @@
-import os
 from .models import EmbeddedNode, ParsedNode
 from .providers.base import EmbeddingProvider
 
