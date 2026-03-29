@@ -66,42 +66,45 @@ async def run_consumer(
 ) -> None:
     url = os.environ.get("REDIS_URL", "redis://localhost:6379")
     r = aioredis.from_url(url)
-    consumer_name = f"embedder-{socket.gethostname()}"
-
     try:
-        await r.xgroup_create(STREAM_IN, GROUP, id="0", mkstream=True)
-    except redis.exceptions.ResponseError as exc:
-        if "BUSYGROUP" not in str(exc):
-            raise
+        consumer_name = f"embedder-{socket.gethostname()}"
 
-    logger.info("Consumer started: group=%s consumer=%s", GROUP, consumer_name)
-
-    while True:
         try:
-            messages = await r.xreadgroup(
-                groupname=GROUP,
-                consumername=consumer_name,
-                streams={STREAM_IN: ">"},
-                count=10,
-                block=1000,
-            )
-            for _stream, events in (messages or []):
-                for msg_id, data in events:
-                    try:
-                        await _process(
-                            r, data, provider, neo4j_client, batch_size, embedding_dim
-                        )
-                        await r.xack(STREAM_IN, GROUP, msg_id)
-                    except (json.JSONDecodeError, ValidationError, KeyError) as exc:
-                        logger.warning(
-                            "Bad message %s, skipping (XACK): %s", msg_id, exc
-                        )
-                        await r.xack(STREAM_IN, GROUP, msg_id)
-                    except asyncio.CancelledError:
-                        raise
-                    except Exception as exc:
-                        logger.error("Failed msg_id=%s: %s", msg_id, exc)
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            logger.error("Consumer loop error: %s", exc)
+            await r.xgroup_create(STREAM_IN, GROUP, id="0", mkstream=True)
+        except redis.exceptions.ResponseError as exc:
+            if "BUSYGROUP" not in str(exc):
+                raise
+
+        logger.info("Consumer started: group=%s consumer=%s", GROUP, consumer_name)
+
+        while True:
+            try:
+                messages = await r.xreadgroup(
+                    groupname=GROUP,
+                    consumername=consumer_name,
+                    streams={STREAM_IN: ">"},
+                    count=10,
+                    block=1000,
+                )
+                for _stream, events in (messages or []):
+                    for msg_id, data in events:
+                        try:
+                            await _process(
+                                r, data, provider, neo4j_client, batch_size, embedding_dim
+                            )
+                            await r.xack(STREAM_IN, GROUP, msg_id)
+                        except (json.JSONDecodeError, ValidationError, KeyError) as exc:
+                            logger.warning(
+                                "Bad message %s, skipping (XACK): %s", msg_id, exc
+                            )
+                            await r.xack(STREAM_IN, GROUP, msg_id)
+                        except asyncio.CancelledError:
+                            raise
+                        except Exception as exc:
+                            logger.error("Failed msg_id=%s: %s", msg_id, exc)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.error("Consumer loop error: %s", exc)
+    finally:
+        await r.aclose()
