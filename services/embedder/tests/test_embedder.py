@@ -48,3 +48,36 @@ def test_embedded_nodes_event_shape():
     evt = EmbeddedNodesEvent(repo="acme", commit_sha="abc123", nodes=[node])
     assert evt.nodes[0].stable_id == "sha256:abc"
     assert len(evt.nodes[0].vector) == 3
+
+
+# ── Providers ─────────────────────────────────────────────────────────────────
+
+def test_ollama_provider_is_embedding_provider():
+    from app.providers.base import EmbeddingProvider
+    from app.providers.ollama import OllamaProvider
+    provider = OllamaProvider()
+    assert isinstance(provider, EmbeddingProvider)
+    assert hasattr(provider, "embed")
+
+
+def test_voyage_provider_is_embedding_provider():
+    import os
+    os.environ["VOYAGE_API_KEY"] = "test-key"
+    try:
+        from app.providers.base import EmbeddingProvider
+        from app.providers.voyage import VoyageProvider
+        provider = VoyageProvider()
+        assert isinstance(provider, EmbeddingProvider)
+        assert hasattr(provider, "embed")
+    finally:
+        os.environ.pop("VOYAGE_API_KEY", None)
+
+
+def test_voyage_provider_raises_without_api_key():
+    import os
+    os.environ.pop("VOYAGE_API_KEY", None)
+    from app.providers.voyage import VoyageProvider
+    # VoyageProvider reads VOYAGE_API_KEY in __init__, not at module load —
+    # no reload needed; instantiating with the key absent is sufficient.
+    with pytest.raises(ValueError, match="VOYAGE_API_KEY"):
+        VoyageProvider()
