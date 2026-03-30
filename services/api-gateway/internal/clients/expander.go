@@ -12,6 +12,7 @@ import (
 
 // ExpanderClient calls the subgraph-expander gRPC service.
 type ExpanderClient struct {
+	conn   *grpc.ClientConn
 	client querypb.QueryServiceClient
 }
 
@@ -21,7 +22,7 @@ func NewExpanderClient(addr string) (*ExpanderClient, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &ExpanderClient{client: querypb.NewQueryServiceClient(conn)}, nil
+	return &ExpanderClient{conn: conn, client: querypb.NewQueryServiceClient(conn)}, nil
 }
 
 // Expand calls QueryService.Expand.

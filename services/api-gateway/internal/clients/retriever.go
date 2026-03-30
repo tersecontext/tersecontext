@@ -12,6 +12,7 @@ import (
 
 // RetrieverClient calls the dual-retriever gRPC service.
 type RetrieverClient struct {
+	conn   *grpc.ClientConn
 	client querypb.QueryServiceClient
 }
 
@@ -21,7 +22,7 @@ func NewRetrieverClient(addr string) (*RetrieverClient, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &RetrieverClient{client: querypb.NewQueryServiceClient(conn)}, nil
+	return &RetrieverClient{conn: conn, client: querypb.NewQueryServiceClient(conn)}, nil
 }
 
 // Retrieve calls QueryService.Retrieve with traceID propagated as gRPC metadata.

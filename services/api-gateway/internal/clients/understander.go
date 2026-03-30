@@ -28,21 +28,24 @@ type understandResponse struct {
 
 // UnderstanderClient calls the query-understander HTTP service.
 type UnderstanderClient struct {
-	baseURL string
-	http    *http.Client
+	baseURL    string
+	httpClient *http.Client
 }
 
 // NewUnderstanderClient creates a client targeting baseURL (e.g. "http://query-understander:8080").
 func NewUnderstanderClient(baseURL string) *UnderstanderClient {
 	return &UnderstanderClient{
-		baseURL: baseURL,
-		http:    &http.Client{Timeout: 30 * time.Second},
+		baseURL:    baseURL,
+		httpClient: &http.Client{Timeout: 30 * time.Second},
 	}
 }
 
 // Understand calls POST /understand and maps the response to a proto QueryIntentResponse.
 func (c *UnderstanderClient) Understand(ctx context.Context, question, repo, traceID string) (*querypb.QueryIntentResponse, error) {
-	payload, _ := json.Marshal(understandRequest{Question: question, Repo: repo})
+	payload, err := json.Marshal(understandRequest{Question: question, Repo: repo})
+	if err != nil {
+		return nil, err
+	}
 	req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/understand", bytes.NewReader(payload))
 	if err != nil {
 		return nil, err
@@ -50,7 +53,7 @@ func (c *UnderstanderClient) Understand(ctx context.Context, question, repo, tra
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Trace-Id", traceID)
 
-	resp, err := c.http.Do(req)
+	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}

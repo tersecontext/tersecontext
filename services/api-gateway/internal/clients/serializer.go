@@ -12,6 +12,7 @@ import (
 
 // SerializerClient calls the serializer gRPC service.
 type SerializerClient struct {
+	conn   *grpc.ClientConn
 	client querypb.QueryServiceClient
 }
 
@@ -21,7 +22,7 @@ func NewSerializerClient(addr string) (*SerializerClient, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &SerializerClient{client: querypb.NewQueryServiceClient(conn)}, nil
+	return &SerializerClient{conn: conn, client: querypb.NewQueryServiceClient(conn)}, nil
 }
 
 // Serialize calls QueryService.Serialize (unary — returns the full document as a string).
