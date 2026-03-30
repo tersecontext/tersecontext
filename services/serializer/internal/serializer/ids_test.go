@@ -12,10 +12,16 @@ func TestAssignIDs_deterministic(t *testing.T) {
 		{StableId: "sha256:fn3", Type: "function", Hop: 0, Score: 1.0},
 		{StableId: "sha256:fn5", Type: "function", Hop: 1, Score: 0.7},
 	}
+	// Reversed order — same nodes, different input sequence
+	reversed := []*querypb.SubgraphNode{nodes[1], nodes[0]}
+
 	ids1 := serializer.AssignIDs(nodes)
-	ids2 := serializer.AssignIDs(nodes)
-	if ids1["sha256:fn3"] != ids2["sha256:fn3"] {
-		t.Errorf("non-deterministic: got %q then %q", ids1["sha256:fn3"], ids2["sha256:fn3"])
+	ids2 := serializer.AssignIDs(reversed)
+
+	for k, v := range ids1 {
+		if ids2[k] != v {
+			t.Errorf("non-deterministic for key %q: order1=%q order2=%q", k, v, ids2[k])
+		}
 	}
 }
 
