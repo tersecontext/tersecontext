@@ -90,7 +90,10 @@ func (h *QueryHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ip, _, _ := net.SplitHostPort(r.RemoteAddr)
+	ip, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil || ip == "" {
+		ip = r.RemoteAddr
+	}
 	key := fmt.Sprintf("%s:%s", req.Repo, ip)
 	if !h.limiter.Allow(key) {
 		w.Header().Set("Content-Type", "application/json")

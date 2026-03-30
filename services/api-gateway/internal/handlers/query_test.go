@@ -165,15 +165,21 @@ func TestQuery_RateLimit(t *testing.T) {
 	h := newTestQueryHandler(&mockUnderstander{}, &mockRetriever{}, &mockExpander{}, &mockSerializer{document: "doc"})
 
 	body := `{"repo":"acme","question":"auth"}`
-	var lastCode int
-	for i := 0; i < 12; i++ {
+	for i := 0; i < 10; i++ {
 		rr := httptest.NewRecorder()
 		req := httptest.NewRequest("POST", "/query", bytes.NewBufferString(body))
 		req.RemoteAddr = "1.2.3.4:9999"
 		h.Handle(rr, req)
-		lastCode = rr.Code
+		if rr.Code != http.StatusOK {
+			t.Fatalf("request %d: expected 200, got %d", i+1, rr.Code)
+		}
 	}
-	if lastCode != http.StatusTooManyRequests {
-		t.Fatalf("expected 429 after exhausting limit, got %d", lastCode)
+	// 11th request should be rate limited
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/query", bytes.NewBufferString(body))
+	req.RemoteAddr = "1.2.3.4:9999"
+	h.Handle(rr, req)
+	if rr.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected 429 after exhausting limit, got %d", rr.Code)
 	}
 }
