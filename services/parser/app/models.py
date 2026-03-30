@@ -19,6 +19,7 @@ class ParsedNode(BaseModel):
     node_hash: str
     type: str
     name: str
+    qualified_name: str = ""   # populated by extractor
     signature: str
     docstring: str
     body: str
