@@ -8,7 +8,7 @@ import subprocess
 
 import redis
 
-from .differ import detect_language, get_all_files, get_changed_files, get_changed_nodes, git_show, _parse_nodes
+from .differ import detect_language, get_all_files, get_changed_files, get_changed_nodes, git_show, parse_nodes
 from .emitter import emit_event
 from .models import FileChangedEvent
 
@@ -52,7 +52,7 @@ def process_commit(
             if language is None:
                 continue
             content = git_show(repo_path, current_sha, file_path)
-            nodes = _parse_nodes(content, file_path, repo)
+            nodes = parse_nodes(content, file_path, repo)
             event = FileChangedEvent(
                 repo=repo,
                 commit_sha=current_sha,
@@ -78,7 +78,7 @@ def process_commit(
 
         if diff_type == "added":
             content = git_show(repo_path, current_sha, file_path)
-            nodes = _parse_nodes(content, file_path, repo)
+            nodes = parse_nodes(content, file_path, repo)
             event = FileChangedEvent(
                 repo=repo,
                 commit_sha=current_sha,
@@ -91,7 +91,7 @@ def process_commit(
             )
         elif diff_type == "deleted":
             content = git_show(repo_path, prev_sha, file_path)
-            nodes = _parse_nodes(content, file_path, repo)
+            nodes = parse_nodes(content, file_path, repo)
             event = FileChangedEvent(
                 repo=repo,
                 commit_sha=current_sha,

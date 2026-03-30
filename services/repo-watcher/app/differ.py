@@ -73,7 +73,7 @@ def git_show(repo_path: str, sha: str, file_path: str) -> bytes:
     return result.stdout
 
 
-def _parse_nodes(content: bytes, file_path: str, repo: str) -> list:
+def parse_nodes(content: bytes, file_path: str, repo: str) -> list:
     """
     Parse content and return ParsedNode list.
     Returns [] on parse error or unsupported language.
@@ -108,8 +108,8 @@ def get_changed_nodes(
     prev_content = git_show(repo_path, prev_sha, file_path)
     curr_content = git_show(repo_path, current_sha, file_path)
 
-    prev_nodes = _parse_nodes(prev_content, file_path, repo)
-    curr_nodes = _parse_nodes(curr_content, file_path, repo)
+    prev_nodes = parse_nodes(prev_content, file_path, repo)
+    curr_nodes = parse_nodes(curr_content, file_path, repo)
 
     prev_hashes: dict[str, str] = {n.stable_id: n.node_hash for n in prev_nodes}
     curr_hashes: dict[str, str] = {n.stable_id: n.node_hash for n in curr_nodes}

@@ -111,13 +111,13 @@ def test_git_show_missing_file_returns_empty(sample_repo):
     assert content == b""
 
 
-# ── _parse_nodes ──────────────────────────────────────────────────────────────
+# ── parse_nodes ───────────────────────────────────────────────────────────────
 
 def test_parse_nodes_python_returns_nodes(sample_repo):
-    from app.differ import git_show, _parse_nodes
+    from app.differ import git_show, parse_nodes
     sha = _head_sha(sample_repo)
     content = git_show(str(sample_repo), sha, "auth.py")
-    nodes = _parse_nodes(content, "auth.py", "testrepo")
+    nodes = parse_nodes(content, "auth.py", "testrepo")
     assert len(nodes) > 0
     node_types = {n.type for n in nodes}
     assert "class" in node_types or "method" in node_types
@@ -126,9 +126,9 @@ def test_parse_nodes_python_returns_nodes(sample_repo):
 def test_parse_nodes_typescript_returns_empty_list():
     # TypeScript AST diff is deferred to v2 (tree-sitter-typescript not wired).
     # TS files still get FileChanged events, but node lists will be empty.
-    from app.differ import _parse_nodes
+    from app.differ import parse_nodes
     content = b"export function hello() { return 1; }\n"
-    nodes = _parse_nodes(content, "component.ts", "testrepo")
+    nodes = parse_nodes(content, "component.ts", "testrepo")
     assert nodes == []
 
 
