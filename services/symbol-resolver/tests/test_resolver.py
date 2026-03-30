@@ -1,6 +1,10 @@
 # services/symbol-resolver/tests/test_resolver.py
 from unittest.mock import MagicMock
+import json
+from datetime import datetime, timezone, timedelta
 from app.resolver import parse_import_body, compute_path_hint, resolve_import, write_package_edge
+from app.pending import push_pending, retry_pending
+from app.models import PendingRef
 
 
 # ── Test 1: from-import extracts symbol name ──────────────────────────────────
@@ -121,3 +125,93 @@ def test_importer_not_yet_in_neo4j_pushes_pending():
     )
     result = resolve_import(driver, "missing-importer-sid", "AuthService", "auth/service", "myrepo")
     assert result is False
+
+
+def _make_ref(**kwargs) -> PendingRef:
+    defaults = dict(
+        source_stable_id="importer-sid",
+        target_name="AuthService",
+        path_hint="auth/service",
+        edge_type="IMPORTS",
+        repo="myrepo",
+        attempted_at=datetime.now(timezone.utc),
+        attempt_count=0,
+    )
+    defaults.update(kwargs)
+    return PendingRef(**defaults)
+
+
+def _ref_json(ref: PendingRef) -> bytes:
+    return ref.model_dump_json().encode()
+
+
+# ── Test 9: retry resolves a pending ref ──────────────────────────────────────
+
+def test_pending_retry_resolves():
+    ref = _make_ref()
+    r = MagicMock()
+    r.lrange.return_value = [_ref_json(ref)]
+
+    driver = MagicMock()
+    session = driver.session.return_value.__enter__.return_value
+    # resolve_import will succeed: exact lookup finds target, edge write succeeds
+    session.run.return_value.data.side_effect = [
+        [{"stable_id": "target-sid"}],  # exact lookup
+        [{"c": 1}],                      # edge write
+    ]
+
+    retry_pending(driver, r, "myrepo")
+
+    r.lrange.assert_called_once_with("pending_refs:myrepo", 0, -1)
+    r.delete.assert_called_once_with("pending_refs:myrepo")
+    # Ref was resolved — should NOT be pushed back
+    r.rpush.assert_not_called()
+
+
+# ── Test 10: retry resolves because importer now exists ───────────────────────
+
+def test_pending_retry_resolves_on_importer_arrival():
+    ref = _make_ref(attempt_count=1)
+    r = MagicMock()
+    r.lrange.return_value = [_ref_json(ref)]
+
+    driver = MagicMock()
+    session = driver.session.return_value.__enter__.return_value
+    session.run.return_value.data.side_effect = [
+        [{"stable_id": "target-sid"}],  # exact lookup finds target
+        [{"c": 1}],                      # edge write now succeeds (importer arrived)
+    ]
+
+    retry_pending(driver, r, "myrepo")
+
+    r.delete.assert_called_once_with("pending_refs:myrepo")
+    r.rpush.assert_not_called()
+
+
+# ── Test 11a: expiry by attempt_count ─────────────────────────────────────────
+
+def test_pending_expiry_drops_old_ref_by_count():
+    ref = _make_ref(attempt_count=6)  # > 5 → drop
+    r = MagicMock()
+    r.lrange.return_value = [_ref_json(ref)]
+
+    driver = MagicMock()
+    retry_pending(driver, r, "myrepo")
+
+    r.delete.assert_called_once_with("pending_refs:myrepo")
+    r.rpush.assert_not_called()
+    driver.session.assert_not_called()  # no Neo4j call attempted
+
+
+# ── Test 11b: expiry by age ───────────────────────────────────────────────────
+
+def test_pending_expiry_drops_old_ref_by_age():
+    old_time = datetime.now(timezone.utc) - timedelta(hours=25)
+    ref = _make_ref(attempted_at=old_time, attempt_count=1)  # old but few attempts
+    r = MagicMock()
+    r.lrange.return_value = [_ref_json(ref)]
+
+    driver = MagicMock()
+    retry_pending(driver, r, "myrepo")
+
+    r.rpush.assert_not_called()
