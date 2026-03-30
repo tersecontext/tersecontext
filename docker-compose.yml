@@ -102,6 +102,26 @@ services:
     networks:
       - tersecontext
 
+  query-understander:
+    build: ./services/query-understander
+    ports:
+      - "8086:8080"
+    environment:
+      REDIS_URL: redis://redis:6379
+      LLM_BASE_URL: http://ollama:11434
+    depends_on:
+      redis:
+        condition: service_healthy
+      ollama:
+        condition: service_started
+    networks:
+      - tersecontext
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   embedder:
     build: ./services/embedder
     ports:
@@ -230,7 +250,6 @@ services:
     build: ./services/serializer
     ports:
       - "8089:8089"
-      - "8090:8090"
     networks:
       - tersecontext
     healthcheck:
@@ -238,6 +257,34 @@ services:
       interval: 10s
       timeout: 5s
       retries: 3
+
+  api-gateway:
+    build: ./services/api-gateway
+    ports:
+      - "8090:8090"
+    environment:
+      PORT: "8090"
+      UNDERSTANDER_URL: http://query-understander:8080
+      RETRIEVER_ADDR: dual-retriever:8087
+      EXPANDER_ADDR: subgraph-expander:8088
+      SERIALIZER_ADDR: serializer:8089
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      query-understander:
+        condition: service_healthy
+      dual-retriever:
+        condition: service_healthy
+      subgraph-expander:
+        condition: service_healthy
+      serializer:
+        condition: service_healthy
+    networks:
+      - tersecontext
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8090/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   # One-shot init: waits for Neo4j to be healthy then applies constraints/indexes.
   # Exits 0 on success; docker-compose marks it as exited (not a failure).
