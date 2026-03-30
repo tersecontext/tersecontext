@@ -953,7 +953,7 @@ const file_query_proto_rawDesc = "" +
 	"Understand\x12%.tersecontext.query.UnderstandRequest\x1a'.tersecontext.query.QueryIntentResponse\x12V\n" +
 	"\bRetrieve\x12#.tersecontext.query.RetrieveRequest\x1a%.tersecontext.query.SeedNodesResponse\x12W\n" +
 	"\x06Expand\x12!.tersecontext.query.ExpandRequest\x1a*.tersecontext.query.RankedSubgraphResponse\x12Y\n" +
-	"\tSerialize\x12$.tersecontext.query.SerializeRequest\x1a&.tersecontext.query.ContextDocResponseB@Z>github.com/tersecontext/tc/services/subgraph-expander/gen;querypbb\x06proto3"
+	"\tSerialize\x12$.tersecontext.query.SerializeRequest\x1a&.tersecontext.query.ContextDocResponseBCZAgithub.com/tersecontext/tc/services/subgraph-expander/gen;querypbb\x06proto3"
 
 var (
 	file_query_proto_rawDescOnce sync.Once
