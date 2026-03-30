@@ -1,4 +1,7 @@
 # tests/test_models.py
+import pytest
+from pydantic import ValidationError
+
 from app.models import EntrypointJob, DiscoverRequest, DiscoverResponse
 
 
@@ -25,3 +28,8 @@ def test_discover_response_fields():
     resp = DiscoverResponse(discovered=10, queued=8)
     assert resp.discovered == 10
     assert resp.queued == 8
+
+
+def test_discover_request_rejects_invalid_trigger():
+    with pytest.raises(ValidationError):
+        DiscoverRequest(repo="myrepo", trigger="webhook")
