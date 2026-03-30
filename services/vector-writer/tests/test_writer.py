@@ -178,3 +178,80 @@ async def test_get_collections_delegates_to_client():
     result = await writer.get_collections()
     mock_client.get_collections.assert_called_once()
     assert result == mock_client.get_collections.return_value
+
+
+# ── consumer.py: _process_embedded ────────────────────────────────────────────
+
+async def test_process_embedded_calls_upsert_points():
+    from app.consumer import _process_embedded
+    mock_writer = AsyncMock()
+    event = _make_event()
+    await _process_embedded(mock_writer, {"event": event.model_dump_json()})
+    mock_writer.upsert_points.assert_called_once()
+
+
+async def test_process_embedded_raises_on_upsert_failure():
+    """Consumer loop must NOT XACK when upsert raises — verified by checking exception propagates."""
+    from app.consumer import _process_embedded
+    mock_writer = AsyncMock()
+    mock_writer.upsert_points.side_effect = Exception("qdrant down")
+    with pytest.raises(Exception, match="qdrant down"):
+        await _process_embedded(mock_writer, {"event": _make_event().model_dump_json()})
+
+
+async def test_process_embedded_raises_on_bad_json():
+    """Consumer loop must XACK on bad JSON — verified by checking exception propagates."""
+    from app.consumer import _process_embedded
+    from pydantic import ValidationError
+    mock_writer = AsyncMock()
+    with pytest.raises((ValidationError, ValueError, Exception)):
+        await _process_embedded(mock_writer, {"event": "not valid json at all {{"})
+    mock_writer.upsert_points.assert_not_called()
+
+
+async def test_process_embedded_returns_normally_when_nodes_empty():
+    """Empty nodes → returns without calling upsert_points → caller will XACK."""
+    from app.consumer import _process_embedded
+    mock_writer = AsyncMock()
+    empty_event = _make_event(nodes=[])
+    await _process_embedded(mock_writer, {"event": empty_event.model_dump_json()})
+    mock_writer.upsert_points.assert_not_called()
+
+
+# ── consumer.py: _process_delete ──────────────────────────────────────────────
+
+async def test_process_delete_calls_delete_points():
+    from app.consumer import _process_delete
+    mock_writer = AsyncMock()
+    event_json = json.dumps({"repo": "acme", "deleted_nodes": ["sha256:abc", "sha256:def"]})
+    await _process_delete(mock_writer, {"event": event_json})
+    mock_writer.delete_points.assert_called_once_with(["sha256:abc", "sha256:def"])
+
+
+async def test_process_delete_skips_when_deleted_nodes_empty():
+    """Empty deleted_nodes → returns without calling delete_points → caller will XACK."""
+    from app.consumer import _process_delete
+    mock_writer = AsyncMock()
+    event_json = json.dumps({"repo": "acme", "deleted_nodes": []})
+    await _process_delete(mock_writer, {"event": event_json})
+    mock_writer.delete_points.assert_not_called()
+
+
+async def test_process_delete_raises_on_delete_failure():
+    """Consumer loop must NOT XACK when delete raises — verified by checking exception propagates."""
+    from app.consumer import _process_delete
+    mock_writer = AsyncMock()
+    mock_writer.delete_points.side_effect = Exception("qdrant down")
+    event_json = json.dumps({"repo": "acme", "deleted_nodes": ["sha256:abc"]})
+    with pytest.raises(Exception, match="qdrant down"):
+        await _process_delete(mock_writer, {"event": event_json})
+
+
+async def test_process_delete_raises_on_bad_json():
+    """Consumer loop must XACK on bad JSON — verified by checking exception propagates."""
+    from app.consumer import _process_delete
+    from pydantic import ValidationError
+    mock_writer = AsyncMock()
+    with pytest.raises((ValidationError, ValueError, Exception)):
+        await _process_delete(mock_writer, {"event": "{{not json}}"})
+    mock_writer.delete_points.assert_not_called()
