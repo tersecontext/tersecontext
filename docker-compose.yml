@@ -179,6 +179,32 @@ services:
       timeout: 5s
       retries: 5
 
+  dual-retriever:
+    build: ./services/dual-retriever
+    ports:
+      - "8087:8087"
+      - "8088:8088"
+    environment:
+      NEO4J_URL: bolt://neo4j:7687
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: localpassword
+      QDRANT_URL: http://qdrant:6333
+      EMBEDDER_URL: http://embedder:8080
+    depends_on:
+      neo4j:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      embedder:
+        condition: service_healthy
+    networks:
+      - tersecontext
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8088/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   # One-shot init: waits for Neo4j to be healthy then applies constraints/indexes.
   # Exits 0 on success; docker-compose marks it as exited (not a failure).
   neo4j-init:
