@@ -23,6 +23,8 @@ message QueryIntentResponse {
 
 message RetrieveRequest {
   QueryIntentResponse intent = 1;
+  string repo = 2;
+  int32 max_seeds = 3;
 }
 
 message SeedNode {
