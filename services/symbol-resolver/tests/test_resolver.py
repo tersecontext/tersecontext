@@ -1,5 +1,5 @@
 # services/symbol-resolver/tests/test_resolver.py
-from unittest.mock import MagicMock, call
+from unittest.mock import MagicMock
 from app.resolver import parse_import_body, compute_path_hint, resolve_import, write_package_edge
 
 
