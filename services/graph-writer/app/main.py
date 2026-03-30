@@ -71,12 +71,14 @@ async def ready():
         await _get_redis().ping()
     except Exception as exc:
         errors.append(f"redis: {exc}")
-    try:
-        if _driver:
+    if _driver is None:
+        errors.append("neo4j: driver not initialized")
+    else:
+        try:
             loop = asyncio.get_running_loop()
             await loop.run_in_executor(None, _driver.verify_connectivity)
-    except Exception as exc:
-        errors.append(f"neo4j: {exc}")
+        except Exception as exc:
+            errors.append(f"neo4j: {exc}")
     if errors:
         return JSONResponse(status_code=503, content={"status": "unavailable", "errors": errors})
     return {"status": "ok"}
