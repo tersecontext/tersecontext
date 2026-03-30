@@ -1099,6 +1099,7 @@ package expander
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 
@@ -1228,11 +1229,12 @@ func TestExpander_EmptySeeds(t *testing.T) {
 }
 
 func TestExpander_UnknownQueryType(t *testing.T) {
-	exp := New(&mockFetcher{err: fmt.Errorf("unknown query_type: \"bogus\"")}, &mockSpecChecker{}, &mockEdgeCollector{})
+	// mockFetcher error is unreachable since validation fires before BFS.
+	exp := New(&mockFetcher{}, &mockSpecChecker{}, &mockEdgeCollector{})
 	seeds := []*querypb.SeedNode{{StableId: "seed1", Score: 1.0}}
 	_, err := exp.Expand(context.Background(), seeds, "bogus", 2000, 1, 0.7)
-	if err == nil {
-		t.Error("expected error for unknown query_type")
+	if !errors.Is(err, ErrInvalidQueryType) {
+		t.Errorf("expected ErrInvalidQueryType, got %v", err)
 	}
 }
 
@@ -1536,10 +1538,8 @@ func TestServer_Expand_InvalidQueryType(t *testing.T) {
 		Seeds:  &querypb.SeedNodesResponse{},
 		Intent: &querypb.QueryIntentResponse{QueryType: "bogus"},
 	})
-	if !errors.Is(err, expander.ErrInvalidQueryType) {
-		if status.Code(err) != codes.InvalidArgument {
-			t.Errorf("expected InvalidArgument for unknown query_type, got %v", err)
-		}
+	if status.Code(err) != codes.InvalidArgument {
+		t.Errorf("expected InvalidArgument for unknown query_type, got %v", err)
 	}
 }
 ```
