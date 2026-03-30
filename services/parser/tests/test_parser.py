@@ -96,9 +96,9 @@ def test_extracts_method_nodes_with_parent_id():
     assert all(m.parent_id == cls.stable_id for m in methods)
 
 
-def test_method_qualified_name_not_in_output():
+def test_method_qualified_name_in_output():
     from app.models import ParsedNode
-    assert "qualified_name" not in ParsedNode.model_fields
+    assert "qualified_name" in ParsedNode.model_fields
 
 
 def test_extracts_top_level_function():

@@ -1,17 +1,7 @@
 from __future__ import annotations
 from typing import Literal, Optional
-from pydantic import BaseModel
 
-
-class FileChangedEvent(BaseModel):
-    repo: str
-    commit_sha: str
-    path: str
-    language: str
-    diff_type: Literal["added", "modified", "deleted", "full_rescan"]
-    changed_nodes: list[str]
-    added_nodes: list[str]
-    deleted_nodes: list[str]
+from pydantic import BaseModel, ConfigDict
 
 
 class ParsedNode(BaseModel):
@@ -19,9 +9,9 @@ class ParsedNode(BaseModel):
     node_hash: str
     type: str
     name: str
-    qualified_name: str = ""   # populated by extractor
+    qualified_name: str = ""
     signature: str
-    docstring: str
+    docstring: str = ""
     body: str
     line_start: int
     line_end: int
@@ -35,10 +25,28 @@ class IntraFileEdge(BaseModel):
 
 
 class ParsedFileEvent(BaseModel):
-    file_path: str
-    language: str
+    model_config = ConfigDict(extra="ignore")
+
     repo: str
     commit_sha: str
+    file_path: str
+    language: str
     nodes: list[ParsedNode]
     intra_file_edges: list[IntraFileEdge]
-    deleted_nodes: list[str]
+    deleted_nodes: list[str] = []
+
+
+class EmbeddedNode(BaseModel):
+    stable_id: str
+    vector: list[float]
+    embed_text: str
+    node_hash: str
+
+
+class EmbeddedNodesEvent(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    repo: str
+    commit_sha: str
+    file_path: str
+    nodes: list[EmbeddedNode]
