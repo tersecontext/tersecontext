@@ -204,7 +204,7 @@ async def test_process_embedded_raises_on_bad_json():
     from app.consumer import _process_embedded
     from pydantic import ValidationError
     mock_writer = AsyncMock()
-    with pytest.raises((ValidationError, ValueError, Exception)):
+    with pytest.raises((ValidationError, ValueError)):
         await _process_embedded(mock_writer, {"event": "not valid json at all {{"})
     mock_writer.upsert_points.assert_not_called()
 
@@ -252,6 +252,6 @@ async def test_process_delete_raises_on_bad_json():
     from app.consumer import _process_delete
     from pydantic import ValidationError
     mock_writer = AsyncMock()
-    with pytest.raises((ValidationError, ValueError, Exception)):
+    with pytest.raises((ValidationError, ValueError)):
         await _process_delete(mock_writer, {"event": "{{not json}}"})
     mock_writer.delete_points.assert_not_called()

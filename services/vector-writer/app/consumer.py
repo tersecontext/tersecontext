@@ -1,5 +1,6 @@
 from __future__ import annotations
 import asyncio
+import json
 import logging
 import os
 import socket
@@ -83,7 +84,7 @@ async def run_embedded_consumer(writer: QdrantWriter) -> None:
                         try:
                             await _process_embedded(writer, data)
                             await r.xack(STREAM_EMBEDDED, GROUP_EMBEDDED, msg_id)
-                        except (ValidationError, ValueError, KeyError) as exc:
+                        except (ValidationError, ValueError, KeyError, json.JSONDecodeError) as exc:
                             logger.warning("Bad message %s, skipping (XACK): %s", msg_id, exc)
                             await r.xack(STREAM_EMBEDDED, GROUP_EMBEDDED, msg_id)
                         except asyncio.CancelledError:
@@ -125,7 +126,7 @@ async def run_delete_consumer(writer: QdrantWriter) -> None:
                         try:
                             await _process_delete(writer, data)
                             await r.xack(STREAM_FILE_CHANGED, GROUP_DELETE, msg_id)
-                        except (ValidationError, ValueError, KeyError) as exc:
+                        except (ValidationError, ValueError, KeyError, json.JSONDecodeError) as exc:
                             logger.warning("Bad delete message %s, skipping (XACK): %s", msg_id, exc)
                             await r.xack(STREAM_FILE_CHANGED, GROUP_DELETE, msg_id)
                         except asyncio.CancelledError:
