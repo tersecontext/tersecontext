@@ -1,6 +1,8 @@
 module github.com/tersecontext/tc/services/dual-retriever
 
-go 1.23
+go 1.24.0
+
+toolchain go1.24.1
 
 require (
 	github.com/neo4j/neo4j-go-driver/v5 v5.28.4

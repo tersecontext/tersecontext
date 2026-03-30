@@ -1,6 +1,8 @@
 module github.com/tersecontext/tc/services/subgraph-expander
 
-go 1.23
+go 1.24.0
+
+toolchain go1.24.1
 
 require (
 	github.com/jackc/pgx/v5 v5.7.5
