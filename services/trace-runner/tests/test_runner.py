@@ -40,3 +40,45 @@ def test_raw_trace_serialises_to_contract_shape():
     assert data["entrypoint_stable_id"] == "sha256:fn_test_login"
     assert len(data["events"]) == 2
     assert data["events"][0]["type"] == "call"
+
+
+# ── Cache ─────────────────────────────────────────────────────────────────────
+
+def test_cache_key_format():
+    from app.cache import cache_key
+    key = cache_key("abc123", "sha256:fn_test_login")
+    assert key == "trace_cache:abc123:sha256:fn_test_login"
+
+
+async def test_is_cached_returns_false_when_missing():
+    from unittest.mock import AsyncMock
+    from app.cache import is_cached
+    mock_r = AsyncMock()
+    mock_r.exists.return_value = 0
+    result = await is_cached(mock_r, "abc123", "sha256:fn_test")
+    assert result is False
+    mock_r.exists.assert_called_once_with("trace_cache:abc123:sha256:fn_test")
+
+
+async def test_is_cached_returns_true_when_present():
+    from unittest.mock import AsyncMock
+    from app.cache import is_cached
+    mock_r = AsyncMock()
+    mock_r.exists.return_value = 1
+    result = await is_cached(mock_r, "abc123", "sha256:fn_test")
+    assert result is True
+
+
+async def test_mark_cached_sets_key_with_ttl():
+    from unittest.mock import AsyncMock
+    from app.cache import mark_cached, CACHE_TTL_SECONDS
+    mock_r = AsyncMock()
+    await mark_cached(mock_r, "abc123", "sha256:fn_test")
+    mock_r.set.assert_called_once_with(
+        "trace_cache:abc123:sha256:fn_test", "1", ex=CACHE_TTL_SECONDS
+    )
+
+
+def test_cache_ttl_is_24_hours():
+    from app.cache import CACHE_TTL_SECONDS
+    assert CACHE_TTL_SECONDS == 86400
