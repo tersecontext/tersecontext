@@ -53,6 +53,7 @@ async def _process(
     out = EmbeddedNodesEvent(
         repo=event.repo,
         commit_sha=event.commit_sha,
+        file_path=event.file_path,
         nodes=embedded,
     )
     await r.xadd(STREAM_OUT, {"event": out.model_dump_json()})

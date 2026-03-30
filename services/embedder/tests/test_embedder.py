@@ -45,7 +45,7 @@ def test_embedded_nodes_event_shape():
         embed_text="foo foo(x: int) -> str",
         node_hash="sha256:def",
     )
-    evt = EmbeddedNodesEvent(repo="acme", commit_sha="abc123", nodes=[node])
+    evt = EmbeddedNodesEvent(repo="acme", commit_sha="abc123", file_path="src/foo.py", nodes=[node])
     assert evt.nodes[0].stable_id == "sha256:abc"
     assert len(evt.nodes[0].vector) == 3
 

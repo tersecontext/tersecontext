@@ -43,4 +43,5 @@ class EmbeddedNode(BaseModel):
 class EmbeddedNodesEvent(BaseModel):
     repo: str
     commit_sha: str
+    file_path: str
     nodes: list[EmbeddedNode]
