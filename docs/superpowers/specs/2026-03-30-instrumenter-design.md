@@ -51,13 +51,13 @@ services/instrumenter/
   "session_id": "550e8400-e29b-41d4-a716-446655440000",
   "status": "ready",
   "patches": [
-    {"target": "sqlalchemy.engine.Engine.execute",     "action": "mock_db"},
-    {"target": "sqlalchemy.engine.Connection.execute", "action": "mock_db"},
-    {"target": "psycopg2.connect",                     "action": "mock_db"},
-    {"target": "httpx.Client.request",                 "action": "mock_http"},
-    {"target": "httpx.AsyncClient.request",            "action": "mock_http"},
-    {"target": "requests.request",                     "action": "mock_http"},
-    {"target": "builtins.open",                        "action": "redirect_writes"}
+    {"target": "sqlalchemy.orm.Session.execute",   "action": "mock_db"},
+    {"target": "sqlalchemy.engine.Engine.connect", "action": "mock_db"},
+    {"target": "psycopg2.connect",                 "action": "mock_db"},
+    {"target": "httpx.Client.request",             "action": "mock_http"},
+    {"target": "httpx.AsyncClient.request",        "action": "mock_http"},
+    {"target": "requests.request",                 "action": "mock_http"},
+    {"target": "builtins.open",                    "action": "redirect_writes"}
   ],
   "output_key": "trace_events:550e8400-e29b-41d4-a716-446655440000",
   "tempdir":    "/tmp/tc/550e8400-e29b-41d4-a716-446655440000",
@@ -68,7 +68,7 @@ services/instrumenter/
 ### Standard endpoints
 
 - `GET /health` → `{"status":"ok","service":"instrumenter","version":"0.1.0"}`
-- `GET /ready` → `{"status":"ok"}` 200 (no external deps — always ready)
+- `GET /ready` → `{"status":"ok"}` 200 — always ready; the instrumenter has no external dependencies, so unlike repo-watcher which pings Redis, this endpoint never returns 503
 - `GET /metrics` → stub Prometheus text with counter `instrumenter_sessions_created_total`
 
 ---
@@ -102,15 +102,21 @@ A fixed list of patch targets validated against `PatchSpec` on startup:
 
 | Target | Action |
 |--------|--------|
-| `sqlalchemy.engine.Engine.execute` | `mock_db` |
-| `sqlalchemy.engine.Connection.execute` | `mock_db` |
+| `sqlalchemy.orm.Session.execute` | `mock_db` |
+| `sqlalchemy.engine.Engine.connect` | `mock_db` |
 | `psycopg2.connect` | `mock_db` |
 | `httpx.Client.request` | `mock_http` |
 | `httpx.AsyncClient.request` | `mock_http` |
 | `requests.request` | `mock_http` |
 | `builtins.open` | `redirect_writes` |
 
+SQLAlchemy 1.x's `Engine.execute` and `Connection.execute` were removed in 2.0. The catalog targets the current 2.x execution paths (`Session.execute` for ORM queries, `Engine.connect` to intercept connection acquisition).
+
 The catalog is the single source of truth for what the trace runner's subprocess will patch. Adding a new patch target requires only updating this file.
+
+**Cross-service contract:** The `output_key` value (`trace_events:{session_id}`) is defined here and must be honoured by the trace runner when writing trace events to Redis. The trace runner spec must reference this key pattern explicitly.
+
+**Patch error handling:** The trace runner must apply patches with `create=False` (the default). If a target symbol is absent in the traced codebase (e.g., the repo uses a different DB driver), `unittest.mock.patch` will raise `AttributeError`. The trace runner should catch this per-patch, skip the failing patch with a warning log, and continue — a missing patch target should not abort the trace run.
 
 ---
 
@@ -119,7 +125,7 @@ The catalog is the single source of truth for what the trace runner's subprocess
 | Var | Default | Description |
 |-----|---------|-------------|
 | `TIMEOUT_MS` | `30000` | Execution timeout passed to trace runner subprocess |
-| `TEMPDIR_PREFIX` | `/tmp/tc` | Base path for per-session filesystem redirect dirs |
+| `TEMPDIR_PREFIX` | `/tmp/tc` | Base path for per-session filesystem redirect dirs. The `tempdir` value in the response (`{TEMPDIR_PREFIX}/{session_id}`) is a convention — the instrumenter never creates this directory. The trace runner must create it on its own filesystem before applying the `redirect_writes` patch. |
 
 ---
 
@@ -146,8 +152,8 @@ No 500s expected in normal operation.
 - `/metrics` → 200, body contains `instrumenter_sessions_created_total`
 
 **`tests/test_config.py`:**
-- All 7 patch targets present in `PATCH_CATALOG`
-- All actions are valid `PatchSpec` literals
+- The 7 known patch targets are a subset of `PATCH_CATALOG` (set-containment check, not exact length — catalog may be extended over time)
+- All entries in `PATCH_CATALOG` have actions that are valid `PatchSpec` literals
 - Catalog validates cleanly against `PatchSpec` model on import
 
 ---
@@ -168,6 +174,7 @@ pytest-asyncio>=0.23.0
 ```dockerfile
 FROM python:3.12-slim
 WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
 RUN pip install --no-cache-dir uv
 COPY requirements.txt ./
 RUN uv pip install --system -r requirements.txt
