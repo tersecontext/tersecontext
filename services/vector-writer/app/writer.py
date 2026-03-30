@@ -3,7 +3,7 @@ import asyncio
 import uuid
 
 from qdrant_client import QdrantClient
-from qdrant_client.http.models import Distance, VectorParams, PointStruct, PointIdsList
+from qdrant_client.http.models import Distance, VectorParams, PointStruct, PointIdsList, CollectionsResponse
 
 from .models import EmbeddedNodesEvent
 
@@ -79,6 +79,6 @@ class QdrantWriter:
 
     # ── get_collections (used by /ready) ──────────────────────────────────────
 
-    async def get_collections(self):
+    async def get_collections(self) -> CollectionsResponse:
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self.client.get_collections)

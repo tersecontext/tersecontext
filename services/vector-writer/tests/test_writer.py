@@ -169,3 +169,12 @@ async def test_ensure_collection_ignores_already_exists_error():
     error.status_code = 409
     mock_client.create_collection.side_effect = error
     await writer.ensure_collection()  # must not raise
+
+
+# ── writer.py: get_collections ─────────────────────────────────────────────────
+
+async def test_get_collections_delegates_to_client():
+    writer, mock_client = _make_writer()
+    result = await writer.get_collections()
+    mock_client.get_collections.assert_called_once()
+    assert result == mock_client.get_collections.return_value
