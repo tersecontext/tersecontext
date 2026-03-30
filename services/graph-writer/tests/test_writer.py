@@ -63,6 +63,8 @@ def test_upsert_nodes_calls_driver_with_active_and_updated_at():
     session.run.assert_called_once()
     query, = session.run.call_args[0]
     assert query == UPSERT_NODES_QUERY
+    _, kwargs = session.run.call_args
+    assert kwargs["nodes"] == nodes
 
 
 # ── Test 2: upsert_nodes with empty list → no driver call ──
@@ -125,7 +127,17 @@ def test_build_node_records_uses_qualified_name():
     assert records[0]["qualified_name"] == "MyClass.my_func"
 
 
-# ── Test 8: partial cache hit — 3 nodes in, 1 missing → 2 records out ──
+# ── Test 8: build_node_records qualified_name empty-string fallback ──
+
+def test_build_node_records_qualified_name_fallback():
+    en = _embedded_node(stable_id="sid1")
+    pn = _parsed_node(stable_id="sid1", name="my_func", qualified_name="")
+    records = build_node_records([en], {"sid1": pn}, "src/foo.py", "python", "myrepo")
+    assert len(records) == 1
+    assert records[0]["qualified_name"] == "my_func"
+
+
+# ── Test 9: partial cache hit — 3 nodes in, 1 missing → 2 records out ──
 
 def test_build_node_records_partial_cache_hit():
     en1 = _embedded_node(stable_id="sid1")
