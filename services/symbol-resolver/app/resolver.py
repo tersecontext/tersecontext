@@ -69,3 +69,83 @@ def compute_path_hint(module: str, file_path: str, dots: int) -> str:
     if not dir_parts:
         return ""
     return "/".join(dir_parts) + "/"
+
+
+# ── Neo4j query constants ──────────────────────────────────────────────────────
+
+LOOKUP_EXACT_QUERY = """
+MATCH (n:Node {repo: $repo, qualified_name: $name, active: true})
+RETURN n.stable_id AS stable_id LIMIT 1
+"""
+
+LOOKUP_PATH_QUERY = """
+MATCH (n:Node {repo: $repo, name: $name, active: true})
+WHERE n.file_path CONTAINS $path_hint
+RETURN n.stable_id AS stable_id LIMIT 1
+"""
+
+WRITE_IMPORT_EDGE_QUERY = """
+MATCH (a:Node {stable_id: $importer_id})
+MATCH (b:Node {stable_id: $imported_id})
+MERGE (a)-[r:IMPORTS]->(b)
+SET r.source = 'static', r.updated_at = datetime()
+RETURN count(r) AS c
+"""
+
+WRITE_PACKAGE_EDGE_QUERY = """
+MATCH (a:Node {stable_id: $importer_id})
+MERGE (pkg:Package {name: $pkg_name, repo: $repo})
+MERGE (a)-[r:IMPORTS]->(pkg)
+SET r.source = 'static', r.updated_at = datetime()
+RETURN count(r) AS c
+"""
+
+
+# ── Neo4j write functions ──────────────────────────────────────────────────────
+
+def resolve_import(driver, importer_stable_id: str, target_name: str, path_hint: str, repo: str) -> bool:
+    """
+    Attempt to write an IMPORTS edge from the import node to the target symbol.
+
+    Strategy:
+      1. Try exact qualified_name lookup in Neo4j.
+      2. If miss, try name + file_path CONTAINS path_hint.
+      3. If target found, write the edge. Returns True if edge written, False otherwise.
+
+    Returns False if:
+      - target not found (both lookups miss)
+      - importer node not yet in Neo4j (MATCH in write query returns 0 rows)
+    """
+    with driver.session() as session:
+        # Attempt 1: exact qualified_name match
+        rows = session.run(LOOKUP_EXACT_QUERY, repo=repo, name=target_name).data()
+        if not rows and path_hint:
+            # Attempt 2: name + file path hint
+            rows = session.run(LOOKUP_PATH_QUERY, repo=repo, name=target_name, path_hint=path_hint).data()
+
+        if not rows:
+            return False
+
+        imported_id = rows[0]["stable_id"]
+        result = session.run(
+            WRITE_IMPORT_EDGE_QUERY,
+            importer_id=importer_stable_id,
+            imported_id=imported_id,
+        ).data()
+        return bool(result)
+
+
+def write_package_edge(driver, importer_stable_id: str, pkg_name: str, repo: str) -> bool:
+    """
+    MERGE a Package node and write an IMPORTS edge from the import node to it.
+    Returns True if the edge was written (importer node existed), False otherwise.
+    Package nodes: no embed_text or vectors.
+    """
+    with driver.session() as session:
+        result = session.run(
+            WRITE_PACKAGE_EDGE_QUERY,
+            importer_id=importer_stable_id,
+            pkg_name=pkg_name,
+            repo=repo,
+        ).data()
+        return bool(result)
