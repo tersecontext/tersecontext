@@ -2,7 +2,6 @@
 from __future__ import annotations
 import ast
 import logging
-from datetime import datetime, timezone, timedelta
 from pathlib import PurePosixPath
 
 logger = logging.getLogger(__name__)
@@ -28,18 +27,21 @@ def parse_import_body(body: str) -> dict:
         logger.warning("Could not parse import body: %r", body)
         return {"kind": "plain", "names": []}
 
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom):
-            names = [alias.name for alias in node.names]
-            return {
-                "kind": "from",
-                "module": node.module or "",
-                "dots": node.level,
-                "names": names,
-            }
-        if isinstance(node, ast.Import):
-            names = [alias.name for alias in node.names]
-            return {"kind": "plain", "names": names}
+    if not tree.body:
+        return {"kind": "plain", "names": []}
+
+    stmt = tree.body[0]
+    if isinstance(stmt, ast.ImportFrom):
+        names = [alias.name for alias in stmt.names]
+        return {
+            "kind": "from",
+            "module": stmt.module or "",
+            "dots": stmt.level,
+            "names": names,
+        }
+    if isinstance(stmt, ast.Import):
+        names = [alias.name for alias in stmt.names]
+        return {"kind": "plain", "names": names}
 
     return {"kind": "plain", "names": []}
 
