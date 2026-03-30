@@ -1,8 +1,6 @@
 module github.com/tersecontext/tc/services/subgraph-expander
 
-go 1.24.0
-
-toolchain go1.24.1
+go 1.23
 
 require (
 	google.golang.org/grpc v1.79.3
