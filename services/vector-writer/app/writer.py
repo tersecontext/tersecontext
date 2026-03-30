@@ -3,7 +3,7 @@ import asyncio
 import uuid
 
 from qdrant_client import QdrantClient
-from qdrant_client.http.models import Distance, VectorParams, PointStruct, PointIdsList, CollectionsResponse
+from qdrant_client.models import CollectionsResponse, Distance, PointIdsList, PointStruct, VectorParams
 
 from .models import EmbeddedNodesEvent
 
