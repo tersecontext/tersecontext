@@ -1444,7 +1444,6 @@ package server
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"testing"
 
