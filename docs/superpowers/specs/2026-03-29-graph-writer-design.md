@@ -17,9 +17,51 @@ The graph-writer is one of two consumers of `stream:embedded-nodes` (the other i
 
 ---
 
+## Upstream Changes Required
+
+> **Prerequisites:** These changes must be applied and deployed before the graph-writer node consumer is enabled. Without the embedder change, every `EmbeddedNodesEvent` message will fail `ValidationError` (missing required `file_path` field). Without the parser change, `qualified_name` will be stored as `""` on all Neo4j nodes until the parser is redeployed.
+
+Two changes to upstream services are needed before this service can be implemented:
+
+### 1. Parser — add `qualified_name` to `ParsedNode`
+
+`services/parser/app/models.py` — add field:
+```python
+qualified_name: str = ""
+```
+
+`services/parser/app/extractor.py` — populate it per node type:
+- function: `fn_name`
+- class: `cls_name`
+- method: `f"{cls_name}.{m_name}"`
+- import: `name`
+
+This is the same value used by the extractor to compute `stable_id`. Storing it on the node makes the graph queryable by qualified name.
+
+### 2. Embedder — add `file_path` to `EmbeddedNodesEvent`
+
+`services/embedder/app/models.py` — add field to `EmbeddedNodesEvent`:
+```python
+file_path: str
+```
+
+`services/embedder/app/consumer.py` — populate from the `ParsedFileEvent`:
+```python
+out = EmbeddedNodesEvent(
+    repo=event.repo,
+    commit_sha=event.commit_sha,
+    file_path=event.file_path,   # ← add this
+    nodes=embedded,
+)
+```
+
+This is required because multiple files in a commit share the same `commit_sha`. The graph-writer cache must be keyed by `(commit_sha, file_path)` to avoid collision.
+
+---
+
 ## Architecture Decision
 
-Two independent async consumer loops run as background tasks in `main.py`. They share a module-level `dict[str, ParsedFileEvent]` cache keyed by `commit_sha`. The edge consumer populates the cache; the node consumer reads from it.
+Two independent async consumer loops run as background tasks in `main.py`. They share a module-level `dict[tuple[str,str], ParsedFileEvent]` cache keyed by `(commit_sha, file_path)`. The edge consumer populates the cache; the node consumer reads from it.
 
 The cache resolves the data gap between streams: `EmbeddedNodesEvent` carries only `stable_id`, `vector`, `embed_text`, `node_hash` — full node metadata (`name`, `type`, `signature`, etc.) lives in `ParsedFileEvent`. Since the embedder processes `parsed-file` events to produce `embedded-nodes` events, `parsed-file` always arrives first, so cache misses are exceptional (restart / out-of-order replay scenarios only).
 
@@ -31,15 +73,15 @@ All Neo4j writes use the sync bolt driver called via `loop.run_in_executor`. All
 
 ```
 stream:parsed-file  ──► edge_consumer  (group: graph-writer-edges-group)
-                          │  cache[commit_sha] = ParsedFileEvent
-                          │  writer.upsert_edges(edges, file_path, language, repo)
-                          │  writer.tombstone(deleted_nodes)   ← if non-empty
+                          │  cache[(commit_sha, file_path)] = ParsedFileEvent
+                          │  writer.upsert_edges(driver, edges)
+                          │  writer.tombstone(driver, deleted_nodes)   ← if non-empty
                           └► XACK
 
 stream:embedded-nodes ──► node_consumer  (group: graph-writer-group)
-                          │  look up cache[commit_sha]
+                          │  look up cache[(commit_sha, file_path)]
                           │  merge EmbeddedNode + ParsedNode → NodeRecord
-                          │  writer.upsert_nodes(records)
+                          │  writer.upsert_nodes(driver, records)
                           └► XACK
 ```
 
@@ -49,6 +91,7 @@ stream:embedded-nodes ──► node_consumer  (group: graph-writer-group)
 - On malformed JSON / ValidationError: log warning, XACK (bad message; retry cannot help)
 - On cache miss in node consumer: log warning, XACK (unrecoverable without re-parse)
 - `tombstone()` is a no-op when `deleted_nodes` is empty (not called)
+- Individual node missing from cache within a batch: log warning per node, skip that node, continue with the rest
 
 ---
 
@@ -73,13 +116,15 @@ services/graph-writer/
 
 ### `models.py`
 
+> **Note:** `ParsedFileEvent` here differs from the embedder's copy — it includes `deleted_nodes`. `extra="ignore"` is declared explicitly (not relied on as a Pydantic v2 default) for forward-compatibility.
+
 ```python
 class ParsedNode(BaseModel):
     stable_id: str
     node_hash: str
     type: str
     name: str
-    qualified_name: str = ""   # if absent, constructed as "{repo}:{file_path}:{name}"
+    qualified_name: str = ""   # populated by parser extractor; see upstream changes
     signature: str
     docstring: str = ""
     body: str
@@ -90,16 +135,18 @@ class ParsedNode(BaseModel):
 class IntraFileEdge(BaseModel):
     source_stable_id: str
     target_stable_id: str
-    type: str
+    type: Literal["CALLS"]   # only supported edge type; Cypher hardcodes CALLS relationship
 
-class ParsedFileEvent(BaseModel):   # extra="ignore"
+class ParsedFileEvent(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
     repo: str
     commit_sha: str
     file_path: str
     language: str
     nodes: list[ParsedNode]
     intra_file_edges: list[IntraFileEdge]
-    deleted_nodes: list[str] = []
+    deleted_nodes: list[str] = []   # ← NOT in embedder's copy; required here for tombstones
 
 class EmbeddedNode(BaseModel):
     stable_id: str
@@ -107,13 +154,16 @@ class EmbeddedNode(BaseModel):
     embed_text: str
     node_hash: str
 
-class EmbeddedNodesEvent(BaseModel):   # extra="ignore"
+class EmbeddedNodesEvent(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
     repo: str
     commit_sha: str
+    file_path: str   # ← requires upstream embedder change; used as cache key
     nodes: list[EmbeddedNode]
 ```
 
-`qualified_name` defaults to `""`. The node consumer constructs it as `f"{repo}:{file_path}:{name}"` when the field is empty before calling `upsert_nodes`.
+`qualified_name` defaults to `""`. After the upstream parser change it will always be populated. If it arrives empty (stale parser deployment), the node consumer falls back to `node.name` — the bare name the extractor uses when computing `stable_id` for top-level nodes.
 
 ### `writer.py`
 
@@ -152,7 +202,7 @@ MERGE (a)-[r:CALLS]->(b)
 SET r.source = 'static', r.updated_at = datetime()
 ```
 
-Empty list → no driver call. Uses `MATCH` (not `MERGE`): if either endpoint node is absent, the row is silently skipped by Neo4j.
+Empty list → no driver call. Uses `MATCH` (not `MERGE`) for endpoints: if either node is absent, that row is silently skipped by Neo4j. The `edges_written` metric counts rows passed in, not confirmed writes (Neo4j batch UNWIND does not return per-row match counts).
 
 **`tombstone(driver, stable_ids: list[str]) -> None`**
 
@@ -171,22 +221,24 @@ Sets `active=false` AND removes edges atomically. Hard-delete of the node is not
 
 Module-level cache:
 ```python
-_parsed_file_cache: dict[str, ParsedFileEvent] = {}
+_parsed_file_cache: dict[tuple[str, str], ParsedFileEvent] = {}
+#                        (commit_sha,   file_path)
 ```
 
 **`run_edge_consumer()`** — consumer group `graph-writer-edges-group`:
 1. Parse `ParsedFileEvent` from message
-2. Store in `_parsed_file_cache[event.commit_sha]`
-3. Call `writer.upsert_edges()`
-4. If `event.deleted_nodes`: call `writer.tombstone()`
+2. Store in `_parsed_file_cache[(event.commit_sha, event.file_path)]`
+3. Call `writer.upsert_edges(driver, edges)`
+4. If `event.deleted_nodes`: call `writer.tombstone(driver, event.deleted_nodes)`
 5. XACK
 
 **`run_node_consumer()`** — consumer group `graph-writer-group`:
 1. Parse `EmbeddedNodesEvent` from message
-2. Look up `_parsed_file_cache[event.commit_sha]`; on miss: log warning, XACK, continue
-3. For each `EmbeddedNode`, find matching `ParsedNode` by `stable_id`; construct `qualified_name` if empty
-4. Build merged records and call `writer.upsert_nodes()`
-5. XACK
+2. Look up `_parsed_file_cache[(event.commit_sha, event.file_path)]`; on miss: log warning, XACK, continue
+3. Build lookup `{stable_id: ParsedNode}` from cached event
+4. For each `EmbeddedNode`: find matching `ParsedNode` by `stable_id`; on miss: log warning, skip node
+5. Build merged records and call `writer.upsert_nodes(driver, records)`
+6. XACK
 
 Consumer name: `graph-writer-{socket.gethostname()}` (both consumers use the same host suffix but different groups).
 
@@ -206,10 +258,10 @@ FastAPI with lifespan context manager. Starts both consumer tasks on startup, ca
 |---|---|
 | Neo4j write fails (transient) | Log error, skip XACK → retry on next poll |
 | Malformed JSON / ValidationError | Log warning, XACK → bad message, retry cannot help |
-| Cache miss in node consumer | Log warning, XACK → unrecoverable without re-parse |
+| Cache miss (whole event) in node consumer | Log warning, XACK → unrecoverable without re-parse |
+| Individual node not found in cache lookup | Log warning, skip that node, continue with rest |
 | `deleted_nodes` is empty | `tombstone()` not called |
 | `nodes` is empty in embedded-nodes event | `upsert_nodes()` called with `[]` → no-op |
-| Node in embedded-nodes not found in cache | Log warning for that node, skip it, continue with rest |
 
 ---
 
@@ -223,9 +275,10 @@ All tests in `tests/test_writer.py`. No live services — Neo4j driver is mocked
 | 2 | `upsert_nodes` — empty list → no driver call |
 | 3 | `upsert_edges` — edges written with `source='static'` |
 | 4 | `upsert_edges` — empty list → no driver call |
-| 5 | `tombstone` — sets `active=False`, `deleted_at` present, edges deleted |
+| 5 | `tombstone` — sets `active=False`, `deleted_at` present |
 | 6 | `tombstone` — empty list → no driver call |
-| 7 | `qualified_name` constructed as `"{repo}:{file_path}:{name}"` when field is empty |
+| 7 | `qualified_name` stored correctly when populated from parsed event |
+| 8 | Partial cache hit — 3 nodes in event, 1 missing from cache → only 2 nodes passed to `upsert_nodes` |
 
 Consumer XACK policy (cache miss → XACK, Neo4j failure → no XACK) is integration-level behaviour verified via the verification scripts in CLAUDE.md, not unit tested.
 
@@ -270,3 +323,5 @@ CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]
 - [ ] Consuming from both streams independently
 - [ ] All unit tests pass
 - [ ] Dockerfile builds cleanly
+- [ ] Parser emits `qualified_name` in `ParsedNode`
+- [ ] Embedder emits `file_path` in `EmbeddedNodesEvent`
