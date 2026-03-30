@@ -41,21 +41,11 @@ def retry_pending(driver, r, repo: str) -> None:
     """
     key = f"pending_refs:{repo}"
 
-    # Bug fix 1: Use pipeline for atomic LRANGE+DEL when available (real Redis),
-    # fall back to sequential calls for mocks
+    # Use pipeline for atomic LRANGE+DEL
     pipe = r.pipeline()
     pipe.lrange(key, 0, -1)
     pipe.delete(key)
-    results = pipe.execute()
-
-    # Check if results is actually a list (real Redis) vs MagicMock
-    if isinstance(results, list) and len(results) >= 1:
-        raw_entries = results[0]
-    else:
-        # Fallback for test mocks and clients without proper pipeline
-        raw_entries = r.lrange(key, 0, -1)
-        if raw_entries:
-            r.delete(key)
+    raw_entries, _ = pipe.execute()
 
     if not raw_entries:
         return

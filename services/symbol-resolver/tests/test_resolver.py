@@ -150,7 +150,7 @@ def _ref_json(ref: PendingRef) -> bytes:
 def test_pending_retry_resolves():
     ref = _make_ref()
     r = MagicMock()
-    r.lrange.return_value = [_ref_json(ref)]
+    r.pipeline.return_value.execute.return_value = ([_ref_json(ref)], 1)
 
     driver = MagicMock()
     session = driver.session.return_value.__enter__.return_value
@@ -162,8 +162,7 @@ def test_pending_retry_resolves():
 
     retry_pending(driver, r, "myrepo")
 
-    r.lrange.assert_called_once_with("pending_refs:myrepo", 0, -1)
-    r.delete.assert_called_once_with("pending_refs:myrepo")
+    r.pipeline.assert_called_once()
     # Ref was resolved — should NOT be pushed back
     r.rpush.assert_not_called()
 
@@ -173,7 +172,7 @@ def test_pending_retry_resolves():
 def test_pending_retry_resolves_on_importer_arrival():
     ref = _make_ref(attempt_count=1)
     r = MagicMock()
-    r.lrange.return_value = [_ref_json(ref)]
+    r.pipeline.return_value.execute.return_value = ([_ref_json(ref)], 1)
 
     driver = MagicMock()
     session = driver.session.return_value.__enter__.return_value
@@ -184,7 +183,7 @@ def test_pending_retry_resolves_on_importer_arrival():
 
     retry_pending(driver, r, "myrepo")
 
-    r.delete.assert_called_once_with("pending_refs:myrepo")
+    r.pipeline.assert_called_once()
     r.rpush.assert_not_called()
 
 
@@ -193,12 +192,12 @@ def test_pending_retry_resolves_on_importer_arrival():
 def test_pending_expiry_drops_old_ref_by_count():
     ref = _make_ref(attempt_count=6)  # > 5 → drop
     r = MagicMock()
-    r.lrange.return_value = [_ref_json(ref)]
+    r.pipeline.return_value.execute.return_value = ([_ref_json(ref)], 1)
 
     driver = MagicMock()
     retry_pending(driver, r, "myrepo")
 
-    r.delete.assert_called_once_with("pending_refs:myrepo")
+    r.pipeline.assert_called_once()
     r.rpush.assert_not_called()
     driver.session.assert_not_called()  # no Neo4j call attempted
 
@@ -209,7 +208,7 @@ def test_pending_expiry_drops_old_ref_by_age():
     old_time = datetime.now(timezone.utc) - timedelta(hours=25)
     ref = _make_ref(attempted_at=old_time, attempt_count=1)  # old but few attempts
     r = MagicMock()
-    r.lrange.return_value = [_ref_json(ref)]
+    r.pipeline.return_value.execute.return_value = ([_ref_json(ref)], 1)
 
     driver = MagicMock()
     retry_pending(driver, r, "myrepo")
