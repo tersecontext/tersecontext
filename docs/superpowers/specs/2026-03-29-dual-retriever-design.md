@@ -23,6 +23,8 @@ message RetrieveRequest {
 
 Regenerate stubs with `make proto`.
 
+**Note:** The proto uses `QueryIntentResponse` (not `QueryIntent` as CLAUDE.md describes) and `double score` (not `float`). The proto file is authoritative. This change also affects the API gateway which sends `RetrieveRequest` — it will need to populate the new fields. Since the API gateway is not yet implemented, there is no backward-compatibility concern.
+
 ## Service Structure
 
 ```
@@ -53,6 +55,10 @@ services/dual-retriever/
 ## Interfaces
 
 ```go
+type Embedder interface {
+    Embed(ctx context.Context, text string) ([]float32, error)
+}
+
 type VectorSearcher interface {
     Search(ctx context.Context, vector []float32, repo string, limit int) ([]RankedNode, error)
 }
@@ -61,6 +67,8 @@ type GraphSearcher interface {
     Search(ctx context.Context, query string, symbols []string, repo string, limit int) ([]RankedNode, error)
 }
 ```
+
+`Embedder` is a separate interface implemented in `qdrant.go` (same file, since it's only used by the vector path). The `Retriever` orchestrator calls `Embed` then passes the vector to `VectorSearcher.Search`.
 
 ## Internal Types
 
@@ -77,15 +85,17 @@ Score is not carried from the source — RRF computes its own scores purely from
 
 ## Retrieval Path 1: Qdrant Semantic Search (qdrant.go)
 
-1. Call embedder: `POST EMBEDDER_URL/embed` with `{"text": intent.embed_query}` → get `[]float32` vector
-2. Search Qdrant `nodes` collection with that vector, `limit = max_seeds * 2`, filter `repo` in payload, `with_payload: true`
+The orchestrator calls `Embedder.Embed(ctx, intent.embed_query)` to get the vector, then passes it to `VectorSearcher.Search`. If `embed_query` is empty, the vector path is skipped entirely (no embedder call, no Qdrant search).
+
+1. `Embedder.Embed`: `POST EMBEDDER_URL/embed` with `{"text": text}` → get `[]float32` vector. Non-200 or unreachable → return error (caught by orchestrator timeout/graceful degradation).
+2. `VectorSearcher.Search`: Search Qdrant `nodes` collection with that vector, `limit = max_seeds * 2`, filter `repo` in payload, `with_payload: true`
 3. Return `[]RankedNode` sorted by Qdrant score descending
 
-The embedder call lives in qdrant.go since embedding is always 1:1 with vector search.
+Both `Embedder` and `VectorSearcher` implementations live in `qdrant.go`.
 
 ## Retrieval Path 2: Neo4j Keyword + Symbol Search (neo4j.go)
 
-1. Build full-text query from intent: join symbols + keywords with `OR` (e.g. `"authenticate OR AuthService OR auth login jwt"`)
+1. Build full-text query from intent: join symbols + keywords with `OR` (e.g. `"authenticate OR AuthService OR auth login jwt"`). If both `keywords` and `symbols` are empty, skip the Neo4j path entirely
 2. Run full-text index query:
    ```cypher
    CALL db.index.fulltext.queryNodes("node_search", $query)
@@ -112,22 +122,36 @@ The embedder call lives in qdrant.go since embedding is always 1:1 with vector s
 - If both fail/empty, return empty `SeedNodesResponse` (no error — graceful degradation)
 
 ```go
-var wg sync.WaitGroup
 vectorResults := make(chan []RankedNode, 1)
 graphResults  := make(chan []RankedNode, 1)
 
-wg.Add(2)
-go func() { defer wg.Done(); vectorResults <- searchQdrant(ctx, intent) }()
-go func() { defer wg.Done(); graphResults  <- searchNeo4j(ctx, intent) }()
+go func() { vectorResults <- embed+searchQdrant(ctx, intent) }()
+go func() { graphResults  <- searchNeo4j(ctx, intent) }()
 
-done := make(chan struct{})
-go func() { wg.Wait(); close(done) }()
-select {
-case <-done:
-case <-time.After(500 * time.Millisecond):
-    log.Warn("retrieval timeout — using partial results")
+// Wait for both or timeout at 500ms
+timer := time.NewTimer(500 * time.Millisecond)
+defer timer.Stop()
+collected := 0
+for collected < 2 {
+    select {
+    case <-timer.C:
+        log.Warn("retrieval timeout — using partial results")
+        goto drain
+    case ...: // receive from either channel
+        collected++
+    }
 }
+drain:
+
+// Non-blocking drain of whatever arrived
+var vr, gr []RankedNode
+select { case vr = <-vectorResults: default: }
+select { case gr = <-graphResults:  default: }
 ```
+
+The 500ms timeout covers the entire vector path (embed + search). Both goroutines write to buffered channels so they never block. After timeout, non-blocking reads drain whatever is available. Goroutines that finish late write to the buffered channel and exit cleanly.
+
+Log per-path latency for observability (see Observability section).
 
 ## Reciprocal Rank Fusion (rrf.go)
 
@@ -148,14 +172,32 @@ func RRF(lists [][]RankedNode, k int, maxSeeds int) []SeedNode
 
 - Implements `QueryService/Retrieve` only
 - Returns `codes.Unimplemented` for `Understand`, `Expand`, `Serialize`
-- `Retrieve` handler: extract intent/repo/max_seeds, default max_seeds to 8 if 0, call retriever, map to `SeedNodesResponse`
+- `Retrieve` handler: extract intent/repo/max_seeds, default max_seeds to 8 if 0 (named constant `DefaultMaxSeeds`), call retriever, map to `SeedNodesResponse`
 - Registers `grpc.health.v1.Health` — reports `SERVING` once clients are initialized
+
+## HTTP Health Server (main.go)
+
+A minimal HTTP server on `PORT+1` (default 8088) exposes the platform-required endpoints:
+
+- `GET /health` — always returns 200 `{"status":"ok"}`
+- `GET /ready` — returns 200 if Neo4j and Qdrant clients are initialized, 503 otherwise
+- `GET /metrics` — placeholder, returns 200 with empty body (Prometheus integration deferred)
+
+This is a simple `net/http` server started alongside the gRPC server — no gRPC-gateway needed.
+
+## Observability
+
+Structured logging (`log/slog`) with:
+- Per-path latency: `vector_ms` and `graph_ms` fields on each Retrieve call
+- Result counts: `vector_count` and `graph_count`
+- Timeout indicator: `timeout=true` when 500ms exceeded
+- Total RPC latency: `retrieve_ms`
 
 ## Dockerfile
 
 Multi-stage build:
 - Builder: `golang:1.23-alpine`, compile binary
-- Runtime: `alpine`, copy binary, expose 8087
+- Runtime: `alpine`, copy binary, expose 8087 and 8088
 
 ## docker-compose Addition
 
@@ -191,4 +233,5 @@ No tests against real Neo4j/Qdrant — covered by CLAUDE.md verification steps.
 - [ ] gRPC health check responds
 - [ ] All Go tests pass
 - [ ] Dockerfile builds cleanly
+- [ ] HTTP /health, /ready, /metrics endpoints respond on port 8088
 - [ ] docker-compose updated
