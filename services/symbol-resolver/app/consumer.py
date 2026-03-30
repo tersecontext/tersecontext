@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import socket
+from datetime import datetime, timezone
 
 import redis as redis_sync
 import redis.asyncio as aioredis
@@ -72,6 +73,7 @@ async def run_consumer(driver) -> None:
                             raise
                         except Exception as exc:
                             logger.error("Consumer failed msg=%s: %s", msg_id, exc)
+                            await r.xack(STREAM, GROUP, msg_id)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -94,7 +96,8 @@ def _process_event(driver, r, event: ParsedFileEvent) -> None:
     """
     import_nodes = [n for n in event.nodes if n.type == "import"]
 
-    from datetime import datetime, timezone
+    # NOTE: Cross-file CALLS edge resolution is deferred to a future version.
+    # The parser only generates intra-file CALLS edges.
     now = datetime.now(timezone.utc)
 
     for node in import_nodes:
