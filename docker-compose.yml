@@ -218,6 +218,29 @@ services:
       timeout: 5s
       retries: 5
 
+  repo-watcher:
+    build: ./services/repo-watcher
+    ports:
+      - "8091:8080"
+    environment:
+      REDIS_URL: redis://redis:6379
+      REPO_ROOT: /repos
+      WATCH_MODE: hook
+      POLL_INTERVAL_SECONDS: "30"
+      WATCHER_URL: http://localhost:8091
+    volumes:
+      - ./services/repo-watcher/tests/fixtures:/repos
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - tersecontext
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   dual-retriever:
     build: ./services/dual-retriever
     ports:
