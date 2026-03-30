@@ -169,6 +169,7 @@ def test_get_changed_nodes_comment_only_no_changed_nodes(sample_repo):
     )
     # No node bodies changed — only a comment between import and class was added
     assert changed == []
+    assert added == []
     assert deleted == []
 
 
@@ -198,3 +199,13 @@ def test_get_changed_nodes_deleted_file(sample_repo):
     assert len(deleted) > 0
     assert changed == []
     assert added == []
+
+
+def test_get_changed_files_renamed(sample_repo):
+    from app.differ import get_changed_files
+    prev_sha = _head_sha(sample_repo)
+    subprocess.run(["git", "mv", "auth.py", "renamed.py"], cwd=sample_repo, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "rename"], cwd=sample_repo, check=True, capture_output=True)
+    curr_sha = _head_sha(sample_repo)
+    files = get_changed_files(str(sample_repo), prev_sha, curr_sha)
+    assert any(f["path"] == "renamed.py" and f["diff_type"] == "modified" for f in files)
