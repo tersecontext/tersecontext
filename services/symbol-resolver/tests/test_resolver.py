@@ -121,7 +121,7 @@ def test_both_lookups_fail_pushes_pending():
 def test_importer_not_yet_in_neo4j_pushes_pending():
     driver, session = _make_driver(
         [{"stable_id": "target-sid"}],   # target found
-        [],                               # edge write returns no rows (importer missing)
+        [{"c": 0}],                      # edge write: importer not found, count=0
     )
     result = resolve_import(driver, "missing-importer-sid", "AuthService", "auth/service", "myrepo")
     assert result is False

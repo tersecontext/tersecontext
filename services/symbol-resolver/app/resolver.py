@@ -127,12 +127,12 @@ def resolve_import(driver, importer_stable_id: str, target_name: str, path_hint:
             return False
 
         imported_id = rows[0]["stable_id"]
-        result = session.run(
+        rows = session.run(
             WRITE_IMPORT_EDGE_QUERY,
             importer_id=importer_stable_id,
             imported_id=imported_id,
         ).data()
-        return bool(result)
+        return bool(rows) and rows[0]["c"] > 0
 
 
 def write_package_edge(driver, importer_stable_id: str, pkg_name: str, repo: str) -> bool:
@@ -142,10 +142,10 @@ def write_package_edge(driver, importer_stable_id: str, pkg_name: str, repo: str
     Package nodes: no embed_text or vectors.
     """
     with driver.session() as session:
-        result = session.run(
+        rows = session.run(
             WRITE_PACKAGE_EDGE_QUERY,
             importer_id=importer_stable_id,
             pkg_name=pkg_name,
             repo=repo,
         ).data()
-        return bool(result)
+        return bool(rows) and rows[0]["c"] > 0
