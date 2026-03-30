@@ -93,6 +93,7 @@ message RankedSubgraphResponse {
 message SerializeRequest {
   RankedSubgraphResponse subgraph = 1;
   QueryIntentResponse    intent   = 2;
+  string repo = 3;
 }
 
 message ContextDocResponse {

@@ -16,15 +16,21 @@ logs:
 
 PROTO_DIR     := proto
 GO_OUT        := services/dual-retriever/gen
+SERIALIZER_GO_OUT := services/serializer/gen
 PYTHON_OUT    := services/query-understander/gen
 
 proto:
-	mkdir -p $(GO_OUT) $(PYTHON_OUT)
+	mkdir -p $(GO_OUT) $(SERIALIZER_GO_OUT) $(PYTHON_OUT)
 	protoc \
 		--proto_path=$(PROTO_DIR) \
 		--go_out=$(GO_OUT) --go_opt=paths=source_relative \
 		--go-grpc_out=$(GO_OUT) --go-grpc_opt=paths=source_relative \
-		$(PROTO_DIR)/*.proto
+		$(PROTO_DIR)/query.proto
+	protoc \
+		--proto_path=$(PROTO_DIR) \
+		--go_out=$(SERIALIZER_GO_OUT) --go_opt=paths=source_relative \
+		--go-grpc_out=$(SERIALIZER_GO_OUT) --go-grpc_opt=paths=source_relative \
+		$(PROTO_DIR)/query.proto
 	python -m grpc_tools.protoc \
 		--proto_path=$(PROTO_DIR) \
 		--python_out=$(PYTHON_OUT) \
