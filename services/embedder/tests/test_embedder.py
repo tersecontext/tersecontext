@@ -219,3 +219,64 @@ async def test_embed_nodes_neo4j_unreachable_treats_all_as_new():
 
     result = await embed_nodes(nodes, neo4j_cache, mock_provider)
     assert len(result) == 3
+
+
+async def test_embed_nodes_raises_on_wrong_dimension():
+    """embed_nodes raises ValueError when provider returns wrong vector dimension."""
+    from app.embedder import embed_nodes
+    node = _make_node("fn", "fn()", node_hash="sha256:new")
+    neo4j_cache: dict = {}
+
+    async def wrong_dim_embed(texts):
+        return [[0.1] * 512 for _ in texts]  # wrong: expected 768
+
+    mock_provider = MagicMock()
+    mock_provider.embed = wrong_dim_embed
+
+    with pytest.raises(ValueError, match="512"):
+        await embed_nodes([node], neo4j_cache, mock_provider, embedding_dim=768)
+
+
+async def test_process_embeds_all_when_neo4j_raises():
+    """When neo4j_client.get_node_hashes raises, _process treats all nodes as new."""
+    import json
+    from app.consumer import _process
+
+    nodes = [_make_node(f"fn{i}", f"fn{i}()") for i in range(3)]
+
+    from app.models import ParsedFileEvent
+    event = ParsedFileEvent(
+        repo="acme",
+        commit_sha="abc",
+        file_path="src/foo.py",
+        language="python",
+        nodes=nodes,
+        intra_file_edges=[],
+    )
+
+    mock_r = AsyncMock()
+
+    mock_neo4j = AsyncMock()
+    mock_neo4j.get_node_hashes.side_effect = Exception("connection refused")
+
+    embedded_count = 0
+
+    async def fake_embed(texts):
+        nonlocal embedded_count
+        embedded_count += len(texts)
+        return [[0.1] * 768 for _ in texts]
+
+    mock_provider = MagicMock()
+    mock_provider.embed = fake_embed
+
+    await _process(
+        mock_r,
+        {"event": event.model_dump_json()},
+        mock_provider,
+        mock_neo4j,
+        batch_size=64,
+        embedding_dim=0,
+    )
+
+    assert embedded_count == 3
+    mock_r.xadd.assert_called_once()
