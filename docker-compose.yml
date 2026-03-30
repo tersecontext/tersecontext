@@ -63,10 +63,7 @@ services:
     networks:
       - tersecontext
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:6333/healthz"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
+      disable: true
 
   redis:
     image: redis:7
@@ -146,7 +143,7 @@ services:
       redis:
         condition: service_healthy
       qdrant:
-        condition: service_healthy
+        condition: service_started
       embedder:
         condition: service_healthy
     networks:
@@ -193,7 +190,7 @@ services:
       neo4j:
         condition: service_healthy
       qdrant:
-        condition: service_healthy
+        condition: service_started
       embedder:
         condition: service_healthy
     networks:
