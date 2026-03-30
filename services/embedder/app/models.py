@@ -38,6 +38,10 @@ class EmbeddedNode(BaseModel):
     vector: list[float]
     embed_text: str
     node_hash: str
+    name: str
+    type: str
+    file_path: str
+    language: str
 
 
 class EmbeddedNodesEvent(BaseModel):

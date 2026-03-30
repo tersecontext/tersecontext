@@ -47,7 +47,9 @@ async def _process(
         neo4j_cache = {}
 
     embedded = await embed_nodes(
-        event.nodes, neo4j_cache, provider, batch_size, embedding_dim
+        event.nodes, neo4j_cache, provider, batch_size, embedding_dim,
+        file_path=event.file_path,
+        language=event.language,
     )
 
     out = EmbeddedNodesEvent(

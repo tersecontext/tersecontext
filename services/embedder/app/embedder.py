@@ -15,6 +15,8 @@ async def embed_nodes(
     provider: EmbeddingProvider,
     batch_size: int = 64,
     embedding_dim: int = 0,
+    file_path: str = "",
+    language: str = "",
 ) -> list[EmbeddedNode]:
     """Embed nodes, skipping any whose node_hash already matches Neo4j.
 
@@ -49,6 +51,10 @@ async def embed_nodes(
             vector=vector,
             embed_text=embed_texts[idx],
             node_hash=node.node_hash,
+            name=node.name,
+            type=node.type,
+            file_path=file_path,
+            language=language,
         )
         for idx, (node, vector) in enumerate(zip(to_embed, vectors))
     ]
