@@ -5,6 +5,7 @@ go 1.24.0
 toolchain go1.24.1
 
 require (
+	github.com/neo4j/neo4j-go-driver/v5 v5.28.4
 	google.golang.org/grpc v1.79.3
 	google.golang.org/protobuf v1.36.11
 )
