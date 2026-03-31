@@ -1717,7 +1717,7 @@ git commit -m "perf(instrumenter): prune stdlib/site-packages subtrees from sys.
 - [ ] parser `extractor.py` and `extractor_go.py` decomposed into 3 focused modules each
 - [ ] perf-tracker `collector.py` decomposed, `aggregator.py` extracted
 - [ ] go-instrumenter `rewriter.go` decomposed into `passes/` package
-- [ ] `spec_text` PATH header includes run count, confidence band, and coverage %
+- [ ] `spec_text` PATH header includes confidence band and coverage %
 - [ ] LOW confidence specs include `⚠ LOW COVERAGE` warning line
 - [ ] Each call sequence item has `[confirmed]` or `[dynamic-only]` tag
 - [ ] `never_observed_static_edges` rendered as `⚠ static-only` warnings
