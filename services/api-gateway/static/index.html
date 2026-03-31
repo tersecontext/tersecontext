@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TerseContext</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    background: #0d1117;
+    color: #c9d1d9;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+  header {
+    padding: 16px 24px;
+    border-bottom: 1px solid #21262d;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  header h1 {
+    font-size: 18px;
+    font-weight: 600;
+    color: #e6edf3;
+  }
+  header .tag {
+    font-size: 11px;
+    background: #1f6feb33;
+    color: #58a6ff;
+    padding: 2px 8px;
+    border-radius: 12px;
+  }
+  main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    max-width: 960px;
+    width: 100%;
+    margin: 0 auto;
+    padding: 24px;
+  }
+  .query-form {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 20px;
+  }
+  .query-form input[type="text"] {
+    flex: 1;
+    padding: 10px 14px;
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    color: #e6edf3;
+    font-size: 14px;
+    outline: none;
+  }
+  .query-form input[type="text"]:focus {
+    border-color: #58a6ff;
+    box-shadow: 0 0 0 3px #1f6feb33;
+  }
+  .query-form input[type="text"]::placeholder {
+    color: #484f58;
+  }
+  .query-form select {
+    padding: 10px 12px;
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    color: #e6edf3;
+    font-size: 14px;
+    outline: none;
+    cursor: pointer;
+    min-width: 140px;
+  }
+  .query-form button {
+    padding: 10px 20px;
+    background: #238636;
+    border: 1px solid #2ea04366;
+    border-radius: 6px;
+    color: #fff;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+  .query-form button:hover { background: #2ea043; }
+  .query-form button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .status {
+    font-size: 13px;
+    color: #8b949e;
+    margin-bottom: 12px;
+    min-height: 20px;
+  }
+  .status.error { color: #f85149; }
+  .result {
+    flex: 1;
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    overflow: auto;
+  }
+  .result pre {
+    padding: 16px;
+    font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+    font-size: 13px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    color: #c9d1d9;
+    min-height: 200px;
+  }
+  .result .empty {
+    color: #484f58;
+    padding: 40px 16px;
+    text-align: center;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    font-size: 14px;
+  }
+  .meta {
+    display: flex;
+    gap: 16px;
+    padding: 10px 16px;
+    border-bottom: 1px solid #21262d;
+    font-size: 12px;
+    color: #8b949e;
+  }
+  .meta span { display: flex; align-items: center; gap: 4px; }
+  .meta .label { color: #484f58; }
+</style>
+</head>
+<body>
+<header>
+  <h1>TerseContext</h1>
+  <span class="tag">query</span>
+</header>
+<main>
+  <form class="query-form" id="form">
+    <select id="repo" required>
+      <option value="" disabled selected>repo...</option>
+    </select>
+    <input type="text" id="question" placeholder="Ask about the codebase..." required autofocus>
+    <button type="submit" id="submit">Query</button>
+  </form>
+  <div class="status" id="status"></div>
+  <div class="result" id="result">
+    <div class="empty">Enter a question to query the knowledge graph</div>
+  </div>
+</main>
+<script>
+const form = document.getElementById('form');
+const repoSelect = document.getElementById('repo');
+const questionInput = document.getElementById('question');
+const submitBtn = document.getElementById('submit');
+const statusEl = document.getElementById('status');
+const resultEl = document.getElementById('result');
+
+// Fetch indexed repos from Neo4j via a lightweight endpoint
+async function loadRepos() {
+  try {
+    const res = await fetch('/repos');
+    if (!res.ok) throw new Error('Failed to fetch repos');
+    const repos = await res.json();
+    repos.forEach(r => {
+      const opt = document.createElement('option');
+      opt.value = r;
+      opt.textContent = r;
+      repoSelect.appendChild(opt);
+    });
+    if (repos.length === 1) repoSelect.value = repos[0];
+  } catch {
+    // Fallback: let user type repo name
+    repoSelect.innerHTML = '<option value="gastown">gastown</option>';
+    repoSelect.value = 'gastown';
+  }
+}
+
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const repo = repoSelect.value;
+  const question = questionInput.value.trim();
+  if (!repo || !question) return;
+
+  submitBtn.disabled = true;
+  statusEl.className = 'status';
+  statusEl.textContent = 'Querying...';
+  resultEl.innerHTML = '<pre></pre>';
+
+  const start = performance.now();
+
+  try {
+    const res = await fetch('/query', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ repo, question }),
+    });
+
+    if (!res.ok) {
+      const err = await res.text();
+      throw new Error(err || res.statusText);
+    }
+
+    const text = await res.text();
+    const elapsed = ((performance.now() - start) / 1000).toFixed(1);
+    statusEl.textContent = `Completed in ${elapsed}s`;
+    resultEl.querySelector('pre').textContent = text;
+  } catch (err) {
+    statusEl.className = 'status error';
+    statusEl.textContent = `Error: ${err.message}`;
+    resultEl.innerHTML = '<div class="empty">Query failed</div>';
+  } finally {
+    submitBtn.disabled = false;
+    questionInput.focus();
+  }
+});
+
+loadRepos();
+</script>
+</body>
+</html>
