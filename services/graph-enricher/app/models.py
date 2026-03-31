@@ -1,5 +1,6 @@
-# services/graph-enricher/app/models.py
 from __future__ import annotations
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict
 
 
@@ -11,7 +12,7 @@ class CallNode(BaseModel):
 
 
 class SideEffect(BaseModel):
-    type: str
+    type: Literal["db_read", "db_write", "cache_read", "cache_set", "http_out", "fs_write"]
     detail: str
     hop_depth: int
 
