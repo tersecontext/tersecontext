@@ -1,45 +1,58 @@
 from __future__ import annotations
 
+import re
+
 from .models import SideEffect, TraceEvent
 
-_DB_READ_PATTERNS = {"fetchall", "fetchone", "select", "fetch"}
-_DB_WRITE_PATTERNS = {"execute", "executemany", "insert", "update", "delete", "commit"}
-_CACHE_SET_PATTERNS = {"set", "hset", "rpush", "lpush", "zadd", "setex"}
-_CACHE_READ_PATTERNS = {"get", "hget", "lrange", "zrange", "smembers"}
-_HTTP_PATTERNS = {"request", "send", "post", "put", "patch"}
-_FS_WRITE_PATTERNS = {"write", "open"}
+# Exact word-boundary patterns for DB to avoid false positives on names like
+# "execute_workflow" or "preselect".
+_DB_READ_EXACT = re.compile(r"(?:^|[_\.])(?:fetchall|fetchone|fetch|select)(?:[_\.]|$)")
+_DB_WRITE_EXACT = re.compile(r"(?:^|[_\.])(?:execute(?:many)?|insert|update|delete|commit)(?:[_\.]|$)")
 
+_CACHE_SET_PATTERNS = {"hset", "rpush", "lpush", "zadd", "setex"}
+_CACHE_READ_PATTERNS = {"hget", "lrange", "zrange", "smembers"}
+# "set"/"get" only count when clearly in a cache context
+_CACHE_SET_GENERIC = re.compile(r"(?:redis|cache)[_\.]set|^set$")
+_CACHE_READ_GENERIC = re.compile(r"(?:redis|cache)[_\.]get|^get$")
 
-def _match(fn_lower: str, patterns: set[str]) -> bool:
-    return any(p in fn_lower for p in patterns)
+_HTTP_EXACT = re.compile(r"(?:http|httpx|requests?|client)[_\.](?:request|send|get|post|put|patch|delete)|_send_request")
+_FS_WRITE_EXACT = re.compile(r"(?:^|[_\.])write(?:[_\.]|$)|(?:^|[_\.])open(?:[_\.]|$)")
 
 
 def classify_side_effects(events: list[TraceEvent]) -> list[SideEffect]:
     effects: list[SideEffect] = []
     seen: set[tuple] = set()
+    call_depth = 0
 
-    for depth, ev in enumerate(events):
-        if ev.type != "call":
+    for ev in events:
+        if ev.type == "call":
+            current_depth = call_depth
+            call_depth += 1
+        elif ev.type in ("return", "exception"):
+            call_depth = max(0, call_depth - 1)
             continue
+        else:
+            continue
+
         fn_lower = ev.fn.lower()
 
-        def _add(kind, detail):
+        def _add(kind, detail, depth=current_depth):
             key = (kind, detail)
             if key not in seen:
                 seen.add(key)
                 effects.append(SideEffect(type=kind, detail=detail, hop_depth=depth))
 
-        if _match(fn_lower, _DB_READ_PATTERNS):
+        if _DB_READ_EXACT.search(fn_lower):
             _add("db_read", f"fn:{ev.fn}")
-        elif _match(fn_lower, _DB_WRITE_PATTERNS):
+        elif _DB_WRITE_EXACT.search(fn_lower):
             _add("db_write", f"fn:{ev.fn}")
-        elif _match(fn_lower, _CACHE_SET_PATTERNS):
+        elif any(p in fn_lower for p in _CACHE_SET_PATTERNS) or _CACHE_SET_GENERIC.search(fn_lower):
             _add("cache_set", f"fn:{ev.fn}")
-        elif _match(fn_lower, _CACHE_READ_PATTERNS) and ("redis" in fn_lower or "cache" in fn_lower or "hget" in fn_lower or "lrange" in fn_lower):
+        elif any(p in fn_lower for p in _CACHE_READ_PATTERNS) or _CACHE_READ_GENERIC.search(fn_lower):
             _add("cache_read", f"fn:{ev.fn}")
-        elif _match(fn_lower, _HTTP_PATTERNS) and ("http" in fn_lower or "request" in fn_lower or "send" in fn_lower or "client" in fn_lower):
+        elif _HTTP_EXACT.search(fn_lower):
             _add("http_out", f"fn:{ev.fn}")
-        elif _match(fn_lower, _FS_WRITE_PATTERNS) and ("write" in fn_lower or "open" in fn_lower):
+        elif _FS_WRITE_EXACT.search(fn_lower):
             _add("fs_write", f"fn:{ev.fn}")
 
     return effects

@@ -7,8 +7,7 @@ from .models import Edge
 logger = logging.getLogger(__name__)
 
 _STATIC_EDGES_QUERY = """
-MATCH (a:Node {repo: $repo})-[r:CALLS]->(b:Node {repo: $repo})
-WHERE a.stable_id = $entrypoint_id
+MATCH (a:Node {stable_id: $entrypoint_id, repo: $repo})-[:CALLS*1..]->(b:Node {repo: $repo})
 RETURN a.name AS source, b.name AS target,
        a.stable_id AS source_id, b.stable_id AS target_id
 """

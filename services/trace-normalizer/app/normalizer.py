@@ -20,6 +20,8 @@ def reconstruct_call_tree(events: list[TraceEvent]) -> list[CallNode]:
     nodes: list[CallNode] = []
     depth = 0
 
+    import logging as _logging
+    _log = _logging.getLogger(__name__)
     for ev in events:
         if ev.type == "call":
             stack.append((ev.fn, depth, ev.timestamp_ms))
@@ -27,6 +29,8 @@ def reconstruct_call_tree(events: list[TraceEvent]) -> list[CallNode]:
         elif ev.type in ("return", "exception") and stack:
             fn, call_depth, call_ts = stack.pop()
             depth = max(0, depth - 1)
+            if ev.fn != fn:
+                _log.warning("call/return mismatch: expected %s, got %s — using call name", fn, ev.fn)
             duration = ev.timestamp_ms - call_ts
             nodes.append(CallNode(
                 stable_id=fn,

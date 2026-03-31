@@ -103,16 +103,24 @@ def _process_message(r: redis_lib.Redis, driver, raw_json: str) -> None:
     _events_processed += 1
 
 
+DLQ_STREAM = "stream:raw-traces-dlq"
+
+
 async def _consumer_loop(r: redis_lib.Redis, driver) -> None:
     _ensure_consumer_group(r)
+    logger.info("Consumer group ready, listening on %s", INPUT_STREAM)
+    loop = asyncio.get_event_loop()
     while True:
         try:
-            messages = r.xreadgroup(
-                CONSUMER_GROUP,
-                CONSUMER_NAME,
-                {INPUT_STREAM: ">"},
-                count=10,
-                block=1000,
+            messages = await loop.run_in_executor(
+                None,
+                lambda: r.xreadgroup(
+                    CONSUMER_GROUP,
+                    CONSUMER_NAME,
+                    {INPUT_STREAM: ">"},
+                    count=10,
+                    block=1000,
+                ),
             )
             if not messages:
                 await asyncio.sleep(0)
@@ -125,7 +133,9 @@ async def _consumer_loop(r: redis_lib.Redis, driver) -> None:
                             _process_message(r, driver, raw if isinstance(raw, str) else raw.decode())
                             r.xack(INPUT_STREAM, CONSUMER_GROUP, msg_id)
                         except Exception as exc:
-                            logger.error("Failed to process message %s: %s", msg_id, exc)
+                            logger.error("Failed to process message %s: %s — sending to DLQ", msg_id, exc)
+                            r.xadd(DLQ_STREAM, {b"msg_id": msg_id, b"error": str(exc).encode(), b"raw": raw if isinstance(raw, bytes) else raw.encode()})
+                            r.xack(INPUT_STREAM, CONSUMER_GROUP, msg_id)
         except asyncio.CancelledError:
             break
         except Exception as exc:
