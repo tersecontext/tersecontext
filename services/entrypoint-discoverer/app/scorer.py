@@ -2,7 +2,7 @@
 from __future__ import annotations
 from datetime import datetime
 
-from .models import EntrypointJob
+from .models import EntrypointJob, detect_language
 
 
 def score_entrypoints(
@@ -37,6 +37,7 @@ def score_entrypoints(
             file_path=ep["file_path"],
             priority=priority,
             repo=repo,
+            language=detect_language(ep["file_path"]),
         ))
 
     return sorted(jobs, key=lambda j: j.priority, reverse=True)

@@ -7,13 +7,6 @@ from .scorer import score_entrypoints
 from .queue import push_jobs
 
 
-def detect_language(file_path: str) -> str:
-    """Detect language from file extension."""
-    if file_path.endswith(".go"):
-        return "go"
-    return "python"
-
-
 def run_discover(neo4j_driver, pg_conn, redis_client, repo: str, trigger: str) -> dict:
     """
     Orchestrate the full entrypoint discovery flow.

@@ -1,12 +1,19 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
+	"log"
 	"net/http"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/tersecontext/tc/services/go-trace-runner/internal/assembler"
+	"github.com/tersecontext/tc/services/go-trace-runner/internal/collector"
+	"github.com/tersecontext/tc/services/go-trace-runner/internal/executor"
 )
 
 type RunRequest struct {
@@ -31,9 +38,9 @@ type RunStatus struct {
 	Error         string `json:"error,omitempty"`
 }
 
-// Run accepts POST /run, validates the request, creates a trace ID,
-// stores status in a sync.Map, and returns 202 Accepted.
-func Run(store *sync.Map) http.HandlerFunc {
+// Run accepts POST /run, validates the request, executes the instrumented
+// binary, collects trace events, and assembles RawTrace.
+func Run(store *sync.Map, sessionsDir string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req RunRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -68,12 +75,72 @@ func Run(store *sync.Map) http.HandlerFunc {
 		}
 		store.Store(traceID, status)
 
-		// Execution will be wired up in Task 9 with Redis.
-		// For now, record accepted time and mark as running asynchronously.
+		// Execute the instrumented binary asynchronously
 		go func() {
 			start := time.Now()
-			_ = start
-			// Placeholder: actual execution wired in Task 9.
+			sessionDir := filepath.Join(sessionsDir, req.SessionID)
+			binaryPath := filepath.Join(sessionDir, "binary")
+			socketPath := filepath.Join(sessionDir, "trace.sock")
+
+			// Check binary exists
+			if _, err := os.Stat(binaryPath); os.IsNotExist(err) {
+				status.Status = "failed"
+				status.Error = "binary not found at " + binaryPath
+				return
+			}
+
+			status.Status = "running"
+
+			// Start socket listener in background
+			eventsCh := make(chan []collector.WireEvent, 1)
+			go func() {
+				events, err := collector.ReadFromSocket(socketPath)
+				if err != nil {
+					log.Printf("collector error: %v", err)
+					eventsCh <- nil
+					return
+				}
+				eventsCh <- events
+			}()
+
+			// Give socket listener time to start
+			time.Sleep(50 * time.Millisecond)
+
+			// Execute binary
+			exec := executor.New(sessionDir)
+			exec.CreateLock()
+			defer exec.ReleaseLock()
+
+			timeout := exec.Timeout(req.Entrypoints[0].Type, req.TimeoutS)
+
+			// Build test pattern from entrypoint names
+			testPattern := ""
+			if req.Entrypoints[0].Type == "test" {
+				testPattern = req.Entrypoints[0].Name
+			}
+
+			err := exec.RunTestBinary(context.Background(), binaryPath, testPattern, timeout, socketPath)
+			if err != nil {
+				log.Printf("execution error: %v", err)
+				status.Error = err.Error()
+			}
+
+			// Collect events
+			events := <-eventsCh
+
+			if events != nil {
+				for _, ep := range req.Entrypoints {
+					trace := assembler.Assemble(ep.StableID, req.CommitSha, req.Repo, events)
+					status.EventsEmitted += len(trace.Events)
+				}
+			}
+
+			status.DurationMs = time.Since(start).Milliseconds()
+			if status.Error == "" {
+				status.Status = "completed"
+			} else {
+				status.Status = "failed"
+			}
 		}()
 
 		w.Header().Set("Content-Type", "application/json")

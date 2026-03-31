@@ -1,7 +1,8 @@
 # tests/test_discoverer.py
 from datetime import datetime, timezone, timedelta
 from unittest.mock import MagicMock, patch
-from app.discoverer import run_discover, detect_language
+from app.discoverer import run_discover
+from app.models import detect_language
 
 
 def test_run_discover_returns_discovered_and_queued():

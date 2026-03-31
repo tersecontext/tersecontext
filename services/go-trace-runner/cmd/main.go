@@ -20,6 +20,11 @@ func main() {
 		port = "8099"
 	}
 
+	sessionsDir := os.Getenv("SESSIONS_DIR")
+	if sessionsDir == "" {
+		sessionsDir = "/tmp/sessions"
+	}
+
 	var ready atomic.Bool
 	var traceStore sync.Map
 
@@ -27,7 +32,7 @@ func main() {
 	mux.HandleFunc("GET /health", handlers.Health)
 	mux.HandleFunc("GET /ready", handlers.Ready(&ready))
 	mux.HandleFunc("GET /metrics", handlers.Metrics)
-	mux.HandleFunc("POST /run", handlers.Run(&traceStore))
+	mux.HandleFunc("POST /run", handlers.Run(&traceStore, sessionsDir))
 	mux.HandleFunc("GET /run/{id}/status", handlers.RunStatusHandler(&traceStore))
 
 	srv := &http.Server{Addr: ":" + port, Handler: mux}

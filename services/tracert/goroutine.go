@@ -23,15 +23,16 @@ func init() {
 }
 
 // currentGoroutineCtx returns or creates the context for the current goroutine.
+// Uses LoadOrStore for atomic create-if-absent (avoids TOCTOU race).
 func currentGoroutineCtx() *goroutineCtx {
 	gid := goid.Get()
-	if ctx, ok := goroutineMap.Load(gid); ok {
-		return ctx.(*goroutineCtx)
-	}
 	ctx := &goroutineCtx{
 		id: nextGoroutineID.Add(1) - 1,
 	}
-	goroutineMap.Store(gid, ctx)
+	actual, loaded := goroutineMap.LoadOrStore(gid, ctx)
+	if loaded {
+		return actual.(*goroutineCtx)
+	}
 	return ctx
 }
 

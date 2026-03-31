@@ -13,6 +13,13 @@ class EntrypointJob(BaseModel):
     language: str = "python"
 
 
+def detect_language(file_path: str) -> str:
+    """Detect language from file extension."""
+    if file_path.endswith(".go"):
+        return "go"
+    return "python"
+
+
 class DiscoverRequest(BaseModel):
     repo: str
     trigger: Literal["schedule", "pr_open"]
