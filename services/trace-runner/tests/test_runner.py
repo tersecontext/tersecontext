@@ -1,3 +1,5 @@
+import pytest
+
 # ── Models ────────────────────────────────────────────────────────────────────
 
 
@@ -87,26 +89,26 @@ def test_cache_ttl_is_24_hours():
 # ── Instrumenter Client ───────────────────────────────────────────────────────
 
 async def test_instrument_returns_session_id():
-    from unittest.mock import AsyncMock, MagicMock, patch
-    import httpx
+    from unittest.mock import AsyncMock, MagicMock
     from app.instrumenter_client import InstrumenterClient
 
     mock_response = MagicMock()
     mock_response.raise_for_status = MagicMock()
     mock_response.json.return_value = {"session_id": "sess-uuid", "status": "ready"}
 
-    with patch("httpx.AsyncClient.post", new=AsyncMock(return_value=mock_response)):
-        client = InstrumenterClient(base_url="http://localhost:8093")
-        session_id = await client.instrument(
-            stable_id="sha256:fn_test_login",
-            file_path="tests/test_auth.py",
-            repo="test",
-        )
+    client = InstrumenterClient(base_url="http://localhost:8093")
+    client._client.post = AsyncMock(return_value=mock_response)
+    session_id = await client.instrument(
+        stable_id="sha256:fn_test_login",
+        file_path="tests/test_auth.py",
+        repo="test",
+    )
+    await client.aclose()
     assert session_id == "sess-uuid"
 
 
 async def test_run_returns_events_and_duration():
-    from unittest.mock import AsyncMock, MagicMock, patch
+    from unittest.mock import AsyncMock, MagicMock
     from app.instrumenter_client import InstrumenterClient
     from app.models import TraceEvent
 
@@ -118,9 +120,10 @@ async def test_run_returns_events_and_duration():
     mock_response.raise_for_status = MagicMock()
     mock_response.json.return_value = {"events": events_data, "duration_ms": 28.0}
 
-    with patch("httpx.AsyncClient.post", new=AsyncMock(return_value=mock_response)):
-        client = InstrumenterClient(base_url="http://localhost:8093")
-        events, duration_ms = await client.run(session_id="sess-uuid")
+    client = InstrumenterClient(base_url="http://localhost:8093")
+    client._client.post = AsyncMock(return_value=mock_response)
+    events, duration_ms = await client.run(session_id="sess-uuid")
+    await client.aclose()
 
     assert len(events) == 2
     assert isinstance(events[0], TraceEvent)
@@ -128,7 +131,7 @@ async def test_run_returns_events_and_duration():
 
 
 async def test_run_raises_on_http_error():
-    from unittest.mock import AsyncMock, MagicMock, patch
+    from unittest.mock import AsyncMock, MagicMock
     import httpx
     from app.instrumenter_client import InstrumenterClient
 
@@ -137,8 +140,25 @@ async def test_run_raises_on_http_error():
         "500", request=MagicMock(), response=MagicMock()
     )
 
-    with patch("httpx.AsyncClient.post", new=AsyncMock(return_value=mock_response)):
-        client = InstrumenterClient(base_url="http://localhost:8093")
-        import pytest
-        with pytest.raises(httpx.HTTPStatusError):
-            await client.run(session_id="sess-uuid")
+    client = InstrumenterClient(base_url="http://localhost:8093")
+    client._client.post = AsyncMock(return_value=mock_response)
+    with pytest.raises(httpx.HTTPStatusError):
+        await client.run(session_id="sess-uuid")
+    await client.aclose()
+
+
+async def test_instrument_raises_on_http_error():
+    import httpx
+    from unittest.mock import AsyncMock, MagicMock
+    from app.instrumenter_client import InstrumenterClient
+
+    client = InstrumenterClient(base_url="http://localhost:8093")
+    mock_resp = MagicMock()
+    mock_resp.raise_for_status.side_effect = httpx.HTTPStatusError(
+        "404", request=MagicMock(), response=MagicMock()
+    )
+    client._client.post = AsyncMock(return_value=mock_resp)
+
+    with pytest.raises(httpx.HTTPStatusError):
+        await client.instrument(stable_id="sha256:fn", file_path="f.py", repo="test")
+    await client.aclose()
