@@ -72,7 +72,7 @@ app = svc.app
 
 ### RedisConsumerBase
 
-Handles the XREADGROUP loop. Subclasses implement one method:
+Handles the XREADGROUP loop. Only applies to services that consume Redis Streams via `XREADGROUP`. Subclasses implement one method:
 
 ```python
 class RedisConsumerBase:
@@ -85,14 +85,24 @@ class RedisConsumerBase:
 
     async def run(self) -> None:
         # XREADGROUP loop with ACK on success, XADD to DLQ on failure
+        # (consistent DLQ behaviour for all stream consumers — this is a
+        #  behaviour change for graph-enricher and spec-generator, which
+        #  currently log-and-ACK without a DLQ)
         ...
 ```
 
+**Scope of RedisConsumerBase:** three services only — graph-enricher, spec-generator, trace-normalizer. These all read from Redis Streams via `XREADGROUP`.
+
+- `trace-runner` uses `BLPOP` against a Redis list (`entrypoint_queue:{repo}`), not `XREADGROUP`. It inherits `ServiceBase` only.
+- `entrypoint-discoverer` produces to a Redis list and has no inbound consumer loop. It inherits `ServiceBase` only.
+- `instrumenter` has no consumer loop (it is called via HTTP from trace-runner). It inherits `ServiceBase` only.
+
 ### Migration strategy
 
-One service at a time, starting with graph-enricher (simplest consumer, fewest deps). Each migration is a pure refactor — behavior unchanged, existing tests verify correctness.
+One service at a time, starting with graph-enricher (simplest consumer, fewest deps). Each migration is a pure refactor — behavior unchanged except for the DLQ addition noted above, which existing tests should be updated to cover.
 
-Services to migrate (in order): graph-enricher → spec-generator → trace-normalizer → trace-runner → entrypoint-discoverer.
+Services to migrate `RedisConsumerBase`: graph-enricher → spec-generator → trace-normalizer.
+Services to migrate `ServiceBase` only: trace-runner → entrypoint-discoverer → instrumenter.
 
 ---
 
@@ -130,13 +140,15 @@ go-instrumenter/
   passes/imports.go     # add/deduplicate tracert import
 ```
 
-### perf-tracker/collector.py (326 lines) → 3 files
+### perf-tracker/collector.py (326 lines) → 2 files
+
+`models.py` already exists as a separate file (`PerfMetric`, `Bottleneck`, input models). Split is:
 
 ```
 perf-tracker/
-  collector.py          # event ingestion and routing
-  aggregator.py         # percentile/window computation
-  models.py             # MetricEvent, AggregatedMetric dataclasses
+  collector.py          # event ingestion and routing (unchanged name)
+  aggregator.py         # percentile/window computation (extracted from collector.py)
+  models.py             # already exists — no change
 ```
 
 ### Files left as-is
@@ -188,19 +200,27 @@ Tag definitions:
 - `[dynamic-only]` — observed at runtime, not in AST
 - `static-only` — in AST, never observed despite traced parent (surfaced as warning)
 
+**How the renderer determines each tag:** Set-membership lookup at render time using data already on `ExecutionPath`. No model changes required.
+
+- A call is `[dynamic-only]` if its `(caller_stable_id, callee_stable_id)` pair appears in `ExecutionPath.dynamic_only_edges`.
+- A call is `[confirmed]` otherwise (present in call_sequence and not in dynamic_only_edges, meaning it was in the static graph and observed).
+- A `static-only` warning is emitted for each entry in `ExecutionPath.never_observed_static_edges` — these are already tracked by the normalizer's reconciler.
+
 Static-only edges are currently silently omitted. Surfacing them as warnings gives downstream LLMs signal about potentially dead or untested code paths.
 
 ### 3. Structured CHANGE_IMPACT
 
-Conditions become first-class fields rather than free text:
+Conditions become first-class fields. The renderer derives conditionality from `SideEffect.hop_depth > 1` (already tracked) — deeper hops indicate the side effect is conditional on a branch not taken in every run. The rendered value is `(conditional)` without specific condition text, since the current data model does not capture condition predicates.
+
+`env vars read` and `callers affected` are **excluded** from scope — the current `SideEffect` model has no `env_read` type, and caller-count data is not available to the renderer without a database query. These may be added in a future spec.
 
 ```
 CHANGE_IMPACT:
-  tables affected    users (r), audit_log (w · conditional: role=admin)
-  external services  stripe-api (conditional: amount>0 AND !sandbox_mode)
-  env vars read      STRIPE_SECRET_KEY, AUDIT_ENABLED
-  callers affected   12 static, 3 dynamic-only
+  tables affected    users (r), audit_log (w · conditional)
+  external services  stripe-api (conditional)
 ```
+
+Verifiable DoD criterion: `SideEffect` entries with `hop_depth > 1` render as `(conditional)` inline; entries with `hop_depth == 1` render without the tag.
 
 ### Qdrant payload additions
 
@@ -230,43 +250,38 @@ At low load (< 50 events queued): behavior is identical to today.
 
 ### 2. Batched Neo4j writes in graph-enricher
 
-**File:** `graph-enricher/enricher.py`
+**File:** `graph-enricher/consumer.py` (not enricher.py — the UNWIND query already exists in enricher.py)
 
-Accumulate the batch from step 1 and write in one `UNWIND` query:
+The existing `update_node_props_batch`, `upsert_dynamic_edges`, and `confirm_static_edges` calls are currently invoked inside `_process_event` — once per event. Move them out of `_process_event` and into the batch loop in `consumer.py`: accumulate all `node_records` and `edge_records` across the full COUNT=50 read, then issue one call to each batch function at the end of the loop iteration.
 
-```cypher
-UNWIND $nodes AS n
-MATCH (node:Node {stable_id: n.stable_id})
-SET node += {
-  observed_calls:  n.observed_calls,
-  avg_latency_ms:  n.avg_latency_ms,
-  branch_coverage: n.branch_coverage,
-  last_traced_at:  datetime()
-}
-```
+This requires no Cypher changes — the UNWIND query is already correct. The change is purely in the call site.
 
-One round-trip per batch of 50 instead of 50 round-trips.
+One Neo4j round-trip per 50-event batch instead of 50 round-trips.
 
 ### 3. Tighter sys.settrace filter in instrumenter
 
 **File:** `instrumenter/trace.py`
 
-Add a hard exclude list applied at frame entry. Returning `None` tells CPython to stop tracing the entire subtree below that frame:
+Add a hard exclude list applied at frame entry using full filesystem paths, not bare module names (`co_filename` is an absolute path such as `/usr/lib/python3.12/importlib/__init__.py`). Returning `None` tells CPython to stop tracing the entire subtree below that frame.
 
 ```python
-EXCLUDE_PREFIXES = (
-    "importlib", "encodings", "logging", "threading",
-    "asyncio", "unittest", "site-packages",
-)
+import sysconfig
+
+_STDLIB_PREFIX = sysconfig.get_path("stdlib")    # e.g. /usr/lib/python3.12
+_SITE_PREFIX   = sysconfig.get_path("purelib")   # e.g. /usr/local/lib/python3.12/dist-packages
+
+EXCLUDE_PREFIXES = (_STDLIB_PREFIX, _SITE_PREFIX)
 
 def trace_func(frame, event, arg):
     if frame.f_code.co_filename.startswith(EXCLUDE_PREFIXES):
-        return None  # prune entire subtree
+        return None  # prune entire subtree — no event emitted, subtree not traced
     if event in ('call', 'return', 'exception'):
         emit_event(event, frame.f_code.co_filename,
                    frame.f_code.co_name, frame.f_lineno)
     return trace_func
 ```
+
+Using `sysconfig` makes the prefixes portable across environments and Python versions. The existing `coverage_filter` in `trace.py` continues to apply on top of this — the exclude list is a coarser, earlier gate.
 
 Expected reduction in raw event volume: 60–80% on typical test suites.
 
@@ -283,13 +298,14 @@ Expected reduction in raw event volume: 60–80% on typical test suites.
 
 ## Definition of Done
 
-- [ ] `shared/` package exists and all 5 dynamic analysis services use it
+- [ ] `shared/` package exists; graph-enricher, spec-generator, trace-normalizer use `RedisConsumerBase`; trace-runner, entrypoint-discoverer, instrumenter use `ServiceBase` only
 - [ ] Each migrated service's `main.py` contains only business-logic imports and wiring
-- [ ] Decomposed files: extractor_go.py, extractor.py, rewriter.go, collector.py
-- [ ] `spec_text` includes confidence band, provenance tags, and static-only warnings
-- [ ] CHANGE_IMPACT conditions are structured fields
+- [ ] Decomposed files: extractor_go.py, extractor.py, rewriter.go, collector.py (models.py unchanged — already exists in perf-tracker)
+- [ ] `spec_text` includes confidence band header, per-call provenance tags via set-membership lookup, and static-only warnings
+- [ ] CHANGE_IMPACT `(conditional)` tag rendered for `SideEffect.hop_depth > 1`; no tag for `hop_depth == 1`
 - [ ] Qdrant payload includes `confidence_band` and `coverage_pct`
-- [ ] Redis consumers use COUNT 50
-- [ ] graph-enricher uses UNWIND batch write
-- [ ] `sys.settrace` exclude list in place with subtree pruning
+- [ ] Redis stream consumers (graph-enricher, spec-generator, trace-normalizer) use COUNT 50
+- [ ] graph-enricher batch functions called once per 50-event loop iteration (not per event)
+- [ ] `sys.settrace` uses `sysconfig`-derived path prefixes; stdlib/site-packages subtrees return `None`
+- [ ] Tests updated to cover DLQ behaviour added by RedisConsumerBase for graph-enricher and spec-generator
 - [ ] All existing unit and integration tests pass
