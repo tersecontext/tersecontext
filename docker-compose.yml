@@ -333,13 +333,19 @@ services:
     environment:
       REDIS_URL: redis://redis:6379
       INSTRUMENTER_URL: http://instrumenter:8080
+      GO_INSTRUMENTER_URL: http://go-instrumenter:8098
+      GO_TRACE_RUNNER_URL: http://go-trace-runner:8099
       COMMIT_SHA: unknown
-      REPOS: "test"
+      REPOS: "gastown"
     depends_on:
       redis:
         condition: service_healthy
       instrumenter:
         condition: service_healthy
+      go-instrumenter:
+        condition: service_healthy
+      go-trace-runner:
+        condition: service_started
     networks:
       - tersecontext
     healthcheck:
@@ -501,6 +507,8 @@ services:
         condition: service_healthy
       neo4j:
         condition: service_healthy
+    networks:
+      - tersecontext
 
   spec-generator:
     build: ./services/spec-generator
@@ -534,7 +542,7 @@ services:
   perf-tracker:
     build: ./services/perf-tracker
     ports:
-      - "8098:8080"
+      - "8100:8080"
     environment:
       REDIS_URL: redis://redis:6379
       POSTGRES_DSN: postgres://tersecontext:${POSTGRES_PASSWORD:-localpassword}@postgres:5432/tersecontext

@@ -9,6 +9,8 @@ from contextlib import asynccontextmanager
 
 import redis as redis_lib
 from fastapi import FastAPI
+
+logging.basicConfig(level=logging.INFO)
 from fastapi.responses import JSONResponse, PlainTextResponse
 
 from .classifier import classify_side_effects
@@ -92,6 +94,7 @@ def _process_message(r: redis_lib.Redis, driver, raw_json: str) -> None:
     ep = ExecutionPath(
         entrypoint_stable_id=trace.entrypoint_stable_id,
         commit_sha=trace.commit_sha,
+        repo=repo,
         call_sequence=nodes,
         side_effects=side_effects,
         dynamic_only_edges=dynamic_only,

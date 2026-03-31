@@ -30,6 +30,12 @@ func (b *Builder) InjectTracertDep(repoDir string) error {
 		return fmt.Errorf("go mod edit -replace: %w\n%s", err, out)
 	}
 
+	tidyCmd := exec.Command("go", "mod", "tidy")
+	tidyCmd.Dir = repoDir
+	if out, err := tidyCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("go mod tidy: %w\n%s", err, out)
+	}
+
 	return nil
 }
 

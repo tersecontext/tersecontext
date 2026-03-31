@@ -114,13 +114,19 @@ func Instrument(sessMgr *session.Manager) http.HandlerFunc {
 		}
 
 		// Build binary.  Use test binary if all entrypoints start with "Test".
-		binaryPath := filepath.Join(sess.Dir, "instrumented")
+		binaryPath := filepath.Join(sess.Dir, "binary")
 		allTests := allTestEntrypoints(req.Entrypoints)
 
+		// Resolve the specific package containing the entrypoint
+		pkg := findEntrypointPackage(destDir, req.Entrypoints[0])
+		if pkg == "" {
+			pkg = "./..."
+		}
+
 		if allTests {
-			err = bldr.BuildTestBinary(destDir, binaryPath, "./...")
+			err = bldr.BuildTestBinary(destDir, binaryPath, pkg)
 		} else {
-			err = bldr.BuildBinary(destDir, binaryPath, "./...")
+			err = bldr.BuildBinary(destDir, binaryPath, pkg)
 		}
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
@@ -147,6 +153,36 @@ func allTestEntrypoints(eps []string) bool {
 		}
 	}
 	return true
+}
+
+// findEntrypointPackage searches for the Go test function in the repo and returns
+// the package path (e.g. "./internal/config"). Returns "" if not found.
+func findEntrypointPackage(repoDir, funcName string) string {
+	// Walk test files looking for "func FuncName("
+	pattern := "func " + funcName + "("
+	var result string
+	filepath.Walk(repoDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() || result != "" {
+			return nil
+		}
+		if !strings.HasSuffix(path, "_test.go") && !strings.HasSuffix(path, ".go") {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil
+		}
+		if strings.Contains(string(data), pattern) {
+			rel, err := filepath.Rel(repoDir, filepath.Dir(path))
+			if err != nil {
+				return nil
+			}
+			result = "./" + rel
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	return result
 }
 
 // copyDir recursively copies src into dst, creating dst if necessary.

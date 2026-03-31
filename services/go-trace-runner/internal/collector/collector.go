@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"net"
+	"time"
 )
 
 type WireEvent struct {
@@ -53,8 +54,15 @@ func ReadFromSocket(socketPath string) ([]WireEvent, error) {
 	}
 	defer ln.Close()
 
+	// Set deadline so Accept doesn't block forever if binary never connects
+	ln.(*net.UnixListener).SetDeadline(time.Now().Add(35 * time.Second))
+
 	conn, err := ln.Accept()
 	if err != nil {
+		// Timeout means no connection — return empty events, not an error
+		if ne, ok := err.(net.Error); ok && ne.Timeout() {
+			return nil, nil
+		}
 		return nil, err
 	}
 	defer conn.Close()

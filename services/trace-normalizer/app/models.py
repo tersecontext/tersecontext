@@ -45,6 +45,7 @@ class Edge(BaseModel):
 class ExecutionPath(BaseModel):
     entrypoint_stable_id: str
     commit_sha: str
+    repo: str = ""
     call_sequence: list[CallNode]
     side_effects: list[SideEffect]
     dynamic_only_edges: list[Edge]
