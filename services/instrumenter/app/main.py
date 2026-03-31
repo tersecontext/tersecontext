@@ -39,3 +39,29 @@ def metrics():
         f"instrumenter_sessions_created_total {_sessions_created}",
     ]
     return PlainTextResponse("\n".join(lines) + "\n")
+
+
+@app.post("/instrument")
+def instrument(req: InstrumentRequest) -> InstrumentResponse:
+    global _sessions_created
+
+    if not req.stable_id or not req.file_path or not req.repo:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "stable_id, file_path, and repo are required"},
+        )
+
+    session_id = str(uuid.uuid4())
+    tempdir_prefix = os.environ.get("TEMPDIR_PREFIX", "/tmp/tc")
+    timeout_ms = int(os.environ.get("TIMEOUT_MS", "30000"))
+
+    _sessions_created += 1
+
+    return InstrumentResponse(
+        session_id=session_id,
+        status="ready",
+        patches=[PatchSpec(**entry) for entry in PATCH_CATALOG],
+        output_key=f"trace_events:{session_id}",
+        tempdir=f"{tempdir_prefix}/{session_id}",
+        timeout_ms=timeout_ms,
+    )
