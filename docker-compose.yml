@@ -483,6 +483,26 @@ services:
       timeout: 5s
       retries: 5
 
+  perf-tracker:
+    build: ./services/perf-tracker
+    ports:
+      - "8098:8080"
+    environment:
+      REDIS_URL: redis://redis:6379
+      POSTGRES_DSN: postgres://tersecontext:${POSTGRES_PASSWORD:-localpassword}@postgres:5432/tersecontext
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    networks:
+      - tersecontext
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   # One-shot init: waits for Neo4j to be healthy then applies constraints/indexes.
   # Exits 0 on success; docker-compose marks it as exited (not a failure).
   neo4j-init:
