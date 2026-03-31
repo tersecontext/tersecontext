@@ -86,6 +86,15 @@ def _process_event(driver, event: ExecutionPath) -> None:
         }
         for node in event.call_sequence
     ]
+    # Ensure the entrypoint node itself is enriched even if it doesn't appear in
+    # call_sequence. Without last_traced_at, the conflict detector skips its edges.
+    observed_in_sequence = {r["stable_id"] for r in node_records}
+    if event.entrypoint_stable_id not in observed_in_sequence:
+        node_records.append({
+            "stable_id": event.entrypoint_stable_id,
+            "avg_latency_ms": event.timing_p50_ms,
+            "branch_coverage": 1.0,
+        })
     enricher.update_node_props_batch(driver, node_records)
 
     # Write dynamic-only edges
