@@ -2,6 +2,53 @@
 
 TerseContext produces minimum-sufficient context for LLMs about a codebase. Instead of dumping entire files, it builds a knowledge graph of the code and retrieves only the relevant slice an LLM needs to answer a question or complete a task.
 
+## Adding a repo to the repo-watcher
+
+The repo-watcher has two trigger modes. Set `WATCH_MODE` in your `.env`:
+
+### Hook mode (default, recommended)
+
+Install a post-commit git hook into the target repo. After every `git commit`, the hook calls `/hook` automatically.
+
+```bash
+curl -X POST http://localhost:8091/install-hook \
+  -H 'Content-Type: application/json' \
+  -d '{"repo_path": "/path/to/your/repo"}'
+# returns: {"installed": true, "hook_path": "/path/to/your/repo/.git/hooks/post-commit"}
+```
+
+The hook script calls the watcher at `WATCHER_URL` (default `http://localhost:8091`). Change this if the watcher runs inside Docker and your repo lives on the host.
+
+### Polling mode
+
+Set `WATCH_MODE=poll` in `.env`. The watcher checks every `POLL_INTERVAL_SECONDS` (default 30) for HEAD changes in `REPO_ROOT`.
+
+### Manual full rescan
+
+Trigger a one-off full index of any repo at any time:
+
+```bash
+curl -X POST http://localhost:8091/index \
+  -H 'Content-Type: application/json' \
+  -d '{"repo_path": "/path/to/your/repo", "full_rescan": true}'
+# returns: {"queued": true}
+```
+
+### Check indexing status
+
+```bash
+curl "http://localhost:8091/status?repo_path=/path/to/your/repo"
+# returns: {"repo": "my-repo", "last_sha": "a4f91c", "last_indexed_at": "...", "pending": false}
+```
+
+### What gets indexed
+
+Only files that changed since the last indexed commit are processed (incremental by default). On first run, or with `full_rescan: true`, all files are processed. The watcher emits `FileChanged` events to `stream:file-changed` with AST-level node diffs — only modified functions/classes flow downstream, not whole files.
+
+Supported languages: Python (`.py`), TypeScript (`.ts`, `.tsx`).
+
+---
+
 ## Inputs
 
 There are two entry points:
@@ -43,13 +90,16 @@ Produces a code knowledge graph in Neo4j and searchable vectors in Qdrant.
 
 ```
 entrypoint-discoverer (finds test fns, routes, CLI commands)
-  → trace-runner (executes them with instrumentation)
+  → trace-runner (executes Python entrypoints with instrumentation)
+  → go-trace-runner (executes Go entrypoints via tracert binary injection)
   → trace-normalizer (flat events → structured execution paths)
   → graph-enricher (dynamic edges + properties → Neo4j)
   → spec-generator (behavior specs → Postgres + Qdrant)
 ```
 
 Enriches the graph with runtime behavior: which functions actually call which, branch frequencies, side effects (DB writes, HTTP calls), latency. Catches things static analysis misses like decorator dispatch, dependency injection, and conditional branches.
+
+Python tracing uses `sys.settrace` hooks with I/O interception (SQLAlchemy, httpx, open). Go tracing uses the `tracert` binary injected via `go-instrumenter` to instrument Go binaries at runtime without source modification.
 
 ### Pipeline 3: Query
 
@@ -96,11 +146,14 @@ make up
 | embedder              | 8083 | Generates vector embeddings via Ollama or Voyage        |
 | vector-writer         | 8085 | Writes embeddings to Qdrant                             |
 | entrypoint-discoverer | 8092 | Finds high-value entrypoints to trace                   |
-| instrumenter          | 8093 | Sets up trace hooks and I/O interception                |
-| trace-runner          | 8094 | Executes instrumented entrypoints                       |
+| instrumenter          | 8093 | Sets up Python trace hooks and I/O interception         |
+| trace-runner          | 8094 | Executes instrumented Python entrypoints                |
 | trace-normalizer      | 8095 | Converts raw traces into structured execution paths     |
 | graph-enricher        | 8096 | Writes dynamic properties and edges to Neo4j            |
 | spec-generator        | 8097 | Generates behavior specs → Postgres + Qdrant            |
+| go-instrumenter       | 8098 | Instruments Go binaries via tracert binary injection    |
+| go-trace-runner       | 8099 | Executes instrumented Go entrypoints                    |
+| perf-tracker          | 8100 | Collects pipeline performance metrics → Postgres        |
 
 All services expose `GET /health`, `GET /ready`, and `GET /metrics`.
 

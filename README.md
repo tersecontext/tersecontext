@@ -49,19 +49,39 @@ The context doc is plain text — paste it directly before your question in any 
 
 ## How it works
 
-- Parses your codebase into a knowledge graph using Tree-sitter
+- Parses your codebase into a knowledge graph using Tree-sitter (Python + Go)
 - Enriches nodes with observed runtime behaviour from your test suite
 - Merges static and dynamic signals with provenance tags (static / spec.N% / runtime-only)
 - Serializes the minimum sufficient subgraph for any given query, within a token budget
+
+## What's built
+
+**Static pipeline** — repo-watcher → parser → graph-writer → symbol-resolver → embedder → vector-writer
+
+**Dynamic pipeline** — entrypoint-discoverer → instrumenter → trace-runner → trace-normalizer → graph-enricher → spec-generator
+
+Go dynamic tracing via go-instrumenter + go-trace-runner (runtime via `tracert` binary injection).
+
+**Query pipeline** — query-understander → dual-retriever → subgraph-expander → serializer → api-gateway
 
 ## Quick start
 
 See [usage.md](usage.md) for full setup instructions.
 
 ```bash
-cp .env.example .env
-make up
-make demo   # see it working against a bundled sample repo in ~5 minutes
+cp .env.example .env          # fill in passwords
+make up                       # start all services
+make demo                     # see it working against a bundled sample repo in ~5 minutes
+
+# Or index your own repo
+curl -X POST http://localhost:8091/install-hook \
+  -H 'Content-Type: application/json' \
+  -d '{"repo_path": "/path/to/your/repo"}'
+
+# Then query it
+curl -X POST http://localhost:8090/query \
+  -H 'Content-Type: application/json' \
+  -d '{"repo": "your-repo", "question": "how does authentication work?"}'
 ```
 
 ## License
