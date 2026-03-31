@@ -6,6 +6,8 @@ set -euo pipefail
 GATEWAY_URL="${GATEWAY_URL:-http://localhost:8090}"
 REPO_WATCHER_URL="${REPO_WATCHER_URL:-http://localhost:8091}"
 DEMO_REPO_PATH="${DEMO_REPO_PATH:-/repos/demo-repo}"
+NEO4J_URL="${NEO4J_URL:-http://localhost:7474}"
+NEO4J_AUTH="${NEO4J_AUTH:-neo4j:localpassword}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 QUERIES_FILE="$SCRIPT_DIR/../demo/queries.txt"
 
@@ -52,8 +54,8 @@ echo "  $INDEX_RESP"
 echo ""
 echo "Waiting for indexing to complete (up to 60s)..."
 for i in $(seq 1 30); do
-  COUNT=$(curl -sf -u neo4j:localpassword \
-    http://localhost:7474/db/neo4j/tx/commit \
+  COUNT=$(curl -sf -u "$NEO4J_AUTH" \
+    "$NEO4J_URL/db/neo4j/tx/commit" \
     -H 'Content-Type: application/json' \
     -d '{"statements":[{"statement":"MATCH (n:Node {repo:\"demo-repo\"}) RETURN count(n) as c"}]}' \
     2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['results'][0]['data'][0]['row'][0])" 2>/dev/null || echo 0)
@@ -78,9 +80,10 @@ while IFS= read -r QUERY || [ -n "$QUERY" ]; do
   echo ""
   echo ">> $QUERY"
   echo "----------------------------------------------------------------"
+  BODY=$(python3 -c "import json,sys; q=sys.argv[1]; print(json.dumps({'repo':'demo-repo','question':q,'options':{'max_tokens':2000}}))" "$QUERY")
   curl -sf -X POST "$GATEWAY_URL/query" \
     -H 'Content-Type: application/json' \
-    -d "{\"repo\":\"demo-repo\",\"question\":\"$QUERY\",\"options\":{\"max_tokens\":2000}}" \
+    -d "$BODY" \
     || echo "(no results — indexing may not be complete yet)"
   echo ""
 done < "$QUERIES_FILE"
