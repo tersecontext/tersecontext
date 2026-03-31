@@ -1,0 +1,36 @@
+syntax = "proto3";
+
+package tersecontext.ingest;
+
+option go_package = "github.com/tersecontext/tc/services/dual-retriever/gen;ingestpb";
+
+// ── IndexRepo ─────────────────────────────────────────────────────────────────
+
+message IndexRequest {
+  string repo       = 1;
+  string path       = 2;  // local path or remote URL
+  string commit_sha = 3;  // optional; HEAD if empty
+}
+
+message IndexProgress {
+  string stage        = 1;  // e.g. "parsing", "embedding", "graph_write"
+  int32  files_done   = 2;
+  int32  files_total  = 3;
+  int32  nodes_done   = 4;
+  string message      = 5;
+}
+
+message IndexResponse {
+  bool   success    = 1;
+  string commit_sha = 2;
+  int32  nodes_indexed = 3;
+  int32  edges_indexed = 4;
+  string error      = 5;
+}
+
+// ── Service ───────────────────────────────────────────────────────────────────
+
+service IngestService {
+  // Streams progress messages while indexing; final message is IndexResponse.
+  rpc IndexRepo (IndexRequest) returns (stream IndexProgress);
+}

@@ -18,6 +18,9 @@ classifiers = [
   "Intended Audience :: Developers",
   "Programming Language :: Python :: 3",
 ]
+dependencies = [
+    "fastapi>=0.135.2",
+]
 
 [project.urls]
 Homepage = "https://github.com/tersecontext/tersecontext"

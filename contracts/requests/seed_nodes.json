@@ -1,0 +1,25 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "requests/seed_nodes",
+  "title": "SeedNodes",
+  "type": "object",
+  "required": ["nodes"],
+  "additionalProperties": false,
+  "properties": {
+    "nodes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["stable_id", "name", "type", "score", "retrieval_method"],
+        "additionalProperties": false,
+        "properties": {
+          "stable_id":        { "type": "string" },
+          "name":             { "type": "string" },
+          "type":             { "type": "string" },
+          "score":            { "type": "number" },
+          "retrieval_method": { "type": "string", "enum": ["vector", "graph", "both"] }
+        }
+      }
+    }
+  }
+}

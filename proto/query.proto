@@ -1,0 +1,111 @@
+syntax = "proto3";
+
+package tersecontext.query;
+
+option go_package = "github.com/tersecontext/tc/services/dual-retriever/gen;querypb";
+
+// ── Understand ────────────────────────────────────────────────────────────────
+
+message UnderstandRequest {
+  string raw_query = 1;
+}
+
+message QueryIntentResponse {
+  string raw_query   = 1;
+  repeated string keywords = 2;
+  repeated string symbols  = 3;
+  string query_type  = 4;  // lookup | flow | impact
+  string embed_query = 5;
+  string scope       = 6;
+}
+
+// ── Retrieve ──────────────────────────────────────────────────────────────────
+
+message RetrieveRequest {
+  QueryIntentResponse intent = 1;
+  string repo = 2;
+  int32 max_seeds = 3;
+}
+
+message SeedNode {
+  string stable_id        = 1;
+  string name             = 2;
+  string type             = 3;
+  double score            = 4;
+  string retrieval_method = 5;  // vector | graph | both
+}
+
+message SeedNodesResponse {
+  repeated SeedNode nodes = 1;
+}
+
+// ── Expand ────────────────────────────────────────────────────────────────────
+
+message ExpandRequest {
+  SeedNodesResponse seeds  = 1;
+  QueryIntentResponse intent = 2;
+  int32 max_tokens         = 3;
+}
+
+message SubgraphNode {
+  string stable_id       = 1;
+  string name            = 2;
+  string type            = 3;
+  string signature       = 4;
+  string docstring       = 5;
+  string body            = 6;
+  double score           = 7;
+  int32  hop             = 8;
+  string provenance      = 9;
+  int32  observed_calls  = 10;
+  double avg_latency_ms  = 11;
+  double branch_coverage = 12;
+  repeated string raises_observed = 13;
+  repeated string side_effects    = 14;
+  string behavior_spec   = 15;
+}
+
+message SubgraphEdge {
+  string source          = 1;
+  string target          = 2;
+  string type            = 3;
+  string provenance      = 4;
+  double frequency_ratio = 5;
+}
+
+message SubgraphWarning {
+  string type   = 1;  // CONFLICT | DEAD | STALE
+  string source = 2;
+  string target = 3;
+  string detail = 4;
+}
+
+message RankedSubgraphResponse {
+  repeated SubgraphNode    nodes            = 1;
+  repeated SubgraphEdge    edges            = 2;
+  repeated SubgraphWarning warnings         = 3;
+  int32 budget_used        = 4;
+  int32 total_candidates   = 5;
+}
+
+// ── Serialize ─────────────────────────────────────────────────────────────────
+
+message SerializeRequest {
+  RankedSubgraphResponse subgraph = 1;
+  QueryIntentResponse    intent   = 2;
+  string repo = 3;
+}
+
+message ContextDocResponse {
+  string document    = 1;
+  int32  token_count = 2;
+}
+
+// ── Service ───────────────────────────────────────────────────────────────────
+
+service QueryService {
+  rpc Understand (UnderstandRequest)  returns (QueryIntentResponse);
+  rpc Retrieve   (RetrieveRequest)    returns (SeedNodesResponse);
+  rpc Expand     (ExpandRequest)      returns (RankedSubgraphResponse);
+  rpc Serialize  (SerializeRequest)   returns (ContextDocResponse);
+}

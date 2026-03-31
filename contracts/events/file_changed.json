@@ -1,0 +1,18 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "events/file_changed",
+  "title": "FileChanged",
+  "type": "object",
+  "required": ["repo", "commit_sha", "path", "language", "diff_type", "changed_nodes", "added_nodes", "deleted_nodes"],
+  "additionalProperties": false,
+  "properties": {
+    "repo":          { "type": "string" },
+    "commit_sha":    { "type": "string" },
+    "path":          { "type": "string" },
+    "language":      { "type": "string" },
+    "diff_type":     { "type": "string", "enum": ["added", "modified", "deleted", "full_rescan"] },
+    "changed_nodes": { "type": "array", "items": { "type": "string" } },
+    "added_nodes":   { "type": "array", "items": { "type": "string" } },
+    "deleted_nodes": { "type": "array", "items": { "type": "string" } }
+  }
+}
