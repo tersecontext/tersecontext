@@ -82,3 +82,63 @@ async def test_mark_cached_sets_key_with_ttl():
 def test_cache_ttl_is_24_hours():
     from app.cache import CACHE_TTL_SECONDS
     assert CACHE_TTL_SECONDS == 86400
+
+
+# ── Instrumenter Client ───────────────────────────────────────────────────────
+
+async def test_instrument_returns_session_id():
+    from unittest.mock import AsyncMock, MagicMock, patch
+    import httpx
+    from app.instrumenter_client import InstrumenterClient
+
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+    mock_response.json.return_value = {"session_id": "sess-uuid", "status": "ready"}
+
+    with patch("httpx.AsyncClient.post", new=AsyncMock(return_value=mock_response)):
+        client = InstrumenterClient(base_url="http://localhost:8093")
+        session_id = await client.instrument(
+            stable_id="sha256:fn_test_login",
+            file_path="tests/test_auth.py",
+            repo="test",
+        )
+    assert session_id == "sess-uuid"
+
+
+async def test_run_returns_events_and_duration():
+    from unittest.mock import AsyncMock, MagicMock, patch
+    from app.instrumenter_client import InstrumenterClient
+    from app.models import TraceEvent
+
+    events_data = [
+        {"type": "call", "fn": "authenticate", "file": "auth/service.py", "line": 34, "timestamp_ms": 0.0},
+        {"type": "return", "fn": "authenticate", "file": "auth/service.py", "line": 52, "timestamp_ms": 28.0},
+    ]
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+    mock_response.json.return_value = {"events": events_data, "duration_ms": 28.0}
+
+    with patch("httpx.AsyncClient.post", new=AsyncMock(return_value=mock_response)):
+        client = InstrumenterClient(base_url="http://localhost:8093")
+        events, duration_ms = await client.run(session_id="sess-uuid")
+
+    assert len(events) == 2
+    assert isinstance(events[0], TraceEvent)
+    assert duration_ms == 28.0
+
+
+async def test_run_raises_on_http_error():
+    from unittest.mock import AsyncMock, MagicMock, patch
+    import httpx
+    from app.instrumenter_client import InstrumenterClient
+
+    mock_response = MagicMock()
+    mock_response.raise_for_status.side_effect = httpx.HTTPStatusError(
+        "500", request=MagicMock(), response=MagicMock()
+    )
+
+    with patch("httpx.AsyncClient.post", new=AsyncMock(return_value=mock_response)):
+        client = InstrumenterClient(base_url="http://localhost:8093")
+        import pytest
+        with pytest.raises(httpx.HTTPStatusError):
+            await client.run(session_id="sess-uuid")
