@@ -162,3 +162,119 @@ async def test_instrument_raises_on_http_error():
     with pytest.raises(httpx.HTTPStatusError):
         await client.instrument(stable_id="sha256:fn", file_path="f.py", repo="test")
     await client.aclose()
+
+
+# ── Runner ────────────────────────────────────────────────────────────────────
+
+async def test_process_job_skips_when_cached():
+    from unittest.mock import AsyncMock, MagicMock
+    from app.models import EntrypointJob
+    from app.runner import process_job
+
+    job = EntrypointJob(
+        stable_id="sha256:fn_test", name="test_fn",
+        file_path="tests/test.py", priority=2, repo="test",
+    )
+    mock_r = AsyncMock()
+    mock_r.exists.return_value = 1  # cache hit
+
+    mock_client = MagicMock()
+    emitted = []
+
+    async def fake_emit(r, trace):
+        emitted.append(trace)
+
+    result = await process_job(
+        job=job,
+        commit_sha="abc123",
+        r=mock_r,
+        instrumenter=mock_client,
+        emit_fn=fake_emit,
+    )
+
+    assert result == "cached"
+    mock_client.instrument.assert_not_called()
+    assert emitted == []
+
+
+async def test_process_job_calls_instrumenter_and_emits():
+    from unittest.mock import AsyncMock, MagicMock
+    from app.models import EntrypointJob, TraceEvent
+    from app.runner import process_job
+
+    job = EntrypointJob(
+        stable_id="sha256:fn_test", name="test_fn",
+        file_path="tests/test.py", priority=2, repo="test",
+    )
+    mock_r = AsyncMock()
+    mock_r.exists.return_value = 0  # cache miss
+
+    events = [
+        TraceEvent(type="call", fn="test_fn", file="tests/test.py", line=1, timestamp_ms=0.0),
+        TraceEvent(type="return", fn="test_fn", file="tests/test.py", line=5, timestamp_ms=10.0),
+    ]
+
+    mock_client = AsyncMock()
+    mock_client.instrument.return_value = "sess-uuid"
+    mock_client.run.return_value = (events, 10.0)
+
+    emitted = []
+
+    async def fake_emit(r, trace):
+        emitted.append(trace)
+
+    result = await process_job(
+        job=job,
+        commit_sha="abc123",
+        r=mock_r,
+        instrumenter=mock_client,
+        emit_fn=fake_emit,
+    )
+
+    assert result == "ok"
+    mock_client.instrument.assert_called_once_with(
+        stable_id="sha256:fn_test", file_path="tests/test.py", repo="test"
+    )
+    mock_client.run.assert_called_once_with(session_id="sess-uuid")
+    assert len(emitted) == 1
+    emitted_trace = emitted[0]
+    assert emitted_trace.entrypoint_stable_id == "sha256:fn_test"
+    assert emitted_trace.commit_sha == "abc123"
+    assert emitted_trace.duration_ms == 10.0
+    assert len(emitted_trace.events) == 2
+    # cache was marked
+    mock_r.set.assert_called_once()
+
+
+async def test_process_job_returns_error_on_instrumenter_failure():
+    from unittest.mock import AsyncMock, MagicMock
+    from app.models import EntrypointJob
+    from app.runner import process_job
+
+    job = EntrypointJob(
+        stable_id="sha256:fn_test", name="test_fn",
+        file_path="tests/test.py", priority=2, repo="test",
+    )
+    mock_r = AsyncMock()
+    mock_r.exists.return_value = 0
+
+    mock_client = AsyncMock()
+    mock_client.instrument.side_effect = Exception("instrumenter unavailable")
+
+    emitted = []
+
+    async def fake_emit(r, trace):
+        emitted.append(trace)
+
+    result = await process_job(
+        job=job,
+        commit_sha="abc123",
+        r=mock_r,
+        instrumenter=mock_client,
+        emit_fn=fake_emit,
+    )
+
+    assert result == "error"
+    assert emitted == []
+    # cache was NOT marked on failure
+    mock_r.set.assert_not_called()
