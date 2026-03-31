@@ -53,7 +53,10 @@ def instrument(req: InstrumentRequest) -> InstrumentResponse:
 
     session_id = str(uuid.uuid4())
     tempdir_prefix = os.environ.get("TEMPDIR_PREFIX", "/tmp/tc")
-    timeout_ms = int(os.environ.get("TIMEOUT_MS", "30000"))
+    try:
+        timeout_ms = int(os.environ.get("TIMEOUT_MS", "30000"))
+    except ValueError:
+        timeout_ms = 30000
 
     _sessions_created += 1
 
