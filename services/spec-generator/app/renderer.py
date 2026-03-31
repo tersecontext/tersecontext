@@ -119,10 +119,7 @@ def render_spec_text(path: ExecutionPath, entrypoint_name: str) -> str:
         for effect in path.side_effects:
             label = _SIDE_EFFECT_LABELS.get(effect.type, effect.type.upper().replace("_", " "))
             suffix = "   (conditional)" if effect.hop_depth > 1 else ""
-            if effect.type in ("db_read", "db_write"):
-                display = _format_db_detail(effect.detail)
-            else:
-                display = effect.detail
+            display = effect.detail
             lines.append(f"  {label}   {display}{suffix}")
         lines.append("")
 

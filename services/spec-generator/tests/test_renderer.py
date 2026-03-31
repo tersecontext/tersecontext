@@ -157,4 +157,6 @@ def test_change_impact_deduplicates_tables():
     ]
     path = _make_path(side_effects=effects)
     text = render_spec_text(path, "login")
-    assert text.count("users") == 1
+    assert "CHANGE_IMPACT:" in text
+    change_impact_section = text.split("CHANGE_IMPACT:")[1]
+    assert change_impact_section.count("users") == 1
