@@ -64,6 +64,8 @@ async def run_worker(
     """Main BLPOP worker loop. Runs until cancelled."""
     r = aioredis.from_url(redis_url)
     instrumenter = InstrumenterClient(base_url=instrumenter_url)
+    _discovered_keys: list[str] = []
+    _last_scan: float = 0.0
 
     try:
         logger.info("Worker started, watching repos=%s", repos)
@@ -71,10 +73,17 @@ async def run_worker(
             try:
                 keys = [f"entrypoint_queue:{repo}" for repo in repos]
                 if not keys:
-                    # Auto-discover repos by scanning Redis for entrypoint queues
-                    async for key in r.scan_iter("entrypoint_queue:*"):
-                        key_str = key.decode("utf-8") if isinstance(key, bytes) else key
-                        keys.append(key_str)
+                    # Re-scan Redis for entrypoint queues every 30 seconds
+                    now = asyncio.get_event_loop().time()
+                    if now - _last_scan >= 30.0 or not _discovered_keys:
+                        _discovered_keys = []
+                        async for key in r.scan_iter("entrypoint_queue:*"):
+                            key_str = key.decode("utf-8") if isinstance(key, bytes) else key
+                            _discovered_keys.append(key_str)
+                        _last_scan = now
+                        if _discovered_keys:
+                            logger.info("Discovered queues: %s", _discovered_keys)
+                    keys = _discovered_keys
                     if not keys:
                         await asyncio.sleep(5)
                         continue
