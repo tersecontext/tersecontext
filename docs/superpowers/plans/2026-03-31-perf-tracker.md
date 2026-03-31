@@ -440,10 +440,15 @@ def mock_store(mock_redis, mock_pg_pool):
 ```python
 # services/perf-tracker/tests/test_store.py
 import pytest
+from unittest.mock import AsyncMock, MagicMock
 from datetime import datetime, timezone
 
 
 async def test_ensure_schema(mock_store, mock_pg_pool):
+    # Mock transaction context manager
+    mock_pg_pool._conn.transaction = MagicMock(return_value=mock_pg_pool._conn)
+    mock_pg_pool._conn.__aenter__ = AsyncMock(return_value=mock_pg_pool._conn)
+    mock_pg_pool._conn.__aexit__ = AsyncMock(return_value=False)
     await mock_store.ensure_schema()
     conn = mock_pg_pool._conn
     conn.execute.assert_called_once()
@@ -559,7 +564,8 @@ class PerfStore:
     async def ensure_schema(self) -> None:
         pool = await self._get_pool()
         async with pool.acquire() as conn:
-            await conn.execute(SCHEMA_SQL)
+            async with conn.transaction():
+                await conn.execute(SCHEMA_SQL)
 
     async def write_metrics(self, metrics: list[PerfMetric]) -> None:
         if not metrics:
@@ -976,6 +982,8 @@ async def run_collector(store: PerfStore, redis_client: aioredis.Redis) -> None:
     last_realtime = 0.0
     last_history = 0.0
     trace_timestamps: dict[str, float] = {}  # (repo, stable_id) -> stream msg timestamp
+    _MAX_TRACE_TIMESTAMPS = 10000  # Bound to prevent memory leak
+    throughput_counts: dict[str, list[float]] = {}  # stream -> list of arrival timestamps
 
     while True:
         try:
@@ -1005,6 +1013,12 @@ async def run_collector(store: PerfStore, redis_client: aioredis.Redis) -> None:
                         repo = parsed.get("repo", "")
                         sid = parsed.get("entrypoint_stable_id", "")
                         trace_timestamps[f"{repo}:{sid}"] = ts_ms
+                        # Evict oldest entries if bounded dict is full
+                        if len(trace_timestamps) > _MAX_TRACE_TIMESTAMPS:
+                            oldest_key = next(iter(trace_timestamps))
+                            del trace_timestamps[oldest_key]
+                        # Track arrival for throughput
+                        throughput_counts.setdefault(STREAM_RAW_TRACES, []).append(time.monotonic())
                         await redis_client.xack(STREAM_RAW_TRACES, GROUP_TRACES, msg_id)
                         messages_processed_total += 1
                     except (json.JSONDecodeError, ValidationError, KeyError) as exc:
@@ -1042,12 +1056,26 @@ async def run_collector(store: PerfStore, redis_client: aioredis.Redis) -> None:
                                 entity_id="trace-normalizer", repo=repo,
                                 value=lag_ms / 1000.0, unit="s",
                             ))
+                        # Track arrival for throughput
+                        throughput_counts.setdefault(STREAM_EXECUTION_PATHS, []).append(time.monotonic())
                         await redis_client.xack(STREAM_EXECUTION_PATHS, GROUP_PATHS, msg_id)
                         messages_processed_total += 1
                     except (json.JSONDecodeError, ValidationError, KeyError) as exc:
                         logger.warning("Bad execution-path %s, skipping: %s", msg_id, exc)
                         messages_failed_total += 1
                         await redis_client.xack(STREAM_EXECUTION_PATHS, GROUP_PATHS, msg_id)
+
+            # Compute throughput (msg/s) from arrival timestamps in last 60s
+            cutoff = time.monotonic() - 60.0
+            for stream in [STREAM_RAW_TRACES, STREAM_EXECUTION_PATHS]:
+                arrivals = throughput_counts.get(stream, [])
+                arrivals[:] = [t for t in arrivals if t > cutoff]
+                rate = len(arrivals) / 60.0 if arrivals else 0.0
+                pending_metrics.append(PerfMetric(
+                    metric_type="pipeline", metric_name="stream_throughput",
+                    entity_id=stream, repo="_pipeline",
+                    value=rate, unit="msg/s",
+                ))
 
             # Pipeline metrics
             pipeline_metrics = await _collect_pipeline_metrics(redis_client)
@@ -1059,10 +1087,17 @@ async def run_collector(store: PerfStore, redis_client: aioredis.Redis) -> None:
                 for repo in repos:
                     repo_metrics = [m for m in pending_metrics if m.repo == repo]
                     snapshot: dict[str, str] = {}
-                    fn_scores: dict[str, float] = {}
+                    fn_scores: dict[str, float] = {}  # cumulative time: frequency x duration
+                    fn_dur: dict[str, float] = {}
+                    fn_freq: dict[str, float] = {}
                     for m in repo_metrics:
                         if m.metric_name == "fn_duration":
-                            fn_scores[m.entity_id] = m.value
+                            fn_dur[m.entity_id] = m.value
+                        elif m.metric_name == "call_frequency":
+                            fn_freq[m.entity_id] = m.value
+                    for eid, dur in fn_dur.items():
+                        freq = fn_freq.get(eid, 1.0)
+                        fn_scores[eid] = dur * freq
                         snapshot[f"{m.metric_name}:{m.entity_id}"] = str(m.value)
                     # Add pipeline metrics
                     for m in pipeline_metrics:
@@ -1176,6 +1211,26 @@ def test_detect_deep_chains():
     bottlenecks = detect_deep_chains(rows, max_depth=15, repo="test")
     assert len(bottlenecks) == 1
     assert bottlenecks[0].entity_id == "sha256:ep1"
+
+
+def test_detect_throughput_drop():
+    from app.analyzer import detect_throughput_drop
+    bottlenecks = detect_throughput_drop(
+        current_rate=2.0, rolling_avg=10.0, threshold_pct=50.0,
+        stream="stream:raw-traces", repo="test",
+    )
+    assert len(bottlenecks) == 1
+    assert bottlenecks[0].category == "pipeline"
+    assert bottlenecks[0].value == 80.0  # 80% drop
+
+
+def test_detect_throughput_drop_ok():
+    from app.analyzer import detect_throughput_drop
+    bottlenecks = detect_throughput_drop(
+        current_rate=8.0, rolling_avg=10.0, threshold_pct=50.0,
+        stream="stream:raw-traces", repo="test",
+    )
+    assert len(bottlenecks) == 0
 
 
 def test_compute_trend_slope():
@@ -1328,6 +1383,32 @@ def detect_deep_chains(
     return bottlenecks
 
 
+def detect_throughput_drop(
+    current_rate: float,
+    rolling_avg: float,
+    threshold_pct: float,
+    stream: str,
+    repo: str,
+) -> list[Bottleneck]:
+    if rolling_avg <= 0 or current_rate >= rolling_avg:
+        return []
+    drop_pct = ((rolling_avg - current_rate) / rolling_avg) * 100
+    if drop_pct < threshold_pct:
+        return []
+    now = datetime.now(timezone.utc)
+    return [Bottleneck(
+        entity_id=stream,
+        entity_name=stream.split(":")[-1] + " stream",
+        category="pipeline",
+        severity="critical" if drop_pct > threshold_pct * 1.5 else "warning",
+        value=drop_pct,
+        unit="%",
+        detail=f"Throughput dropped {drop_pct:.0f}% (current {current_rate:.1f} msg/s vs avg {rolling_avg:.1f} msg/s)",
+        repo=repo,
+        detected_at=now,
+    )]
+
+
 def compute_trend_slope(points: list[dict]) -> tuple[float, str]:
     if len(points) < 2:
         return 0.0, "stable"
@@ -1469,6 +1550,18 @@ def test_get_trends(api_client, mock_store):
     assert "trend" in data
 
 
+def test_get_hot_paths(api_client, mock_store):
+    mock_store.get_hot_functions = AsyncMock(return_value=[
+        ("sha256:fn_auth", 3600.0),
+        ("sha256:fn_login", 1200.0),
+    ])
+    resp = api_client.get("/api/v1/hot-paths/test-repo?limit=5")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) == 2
+    assert data[0]["cumulative_ms"] == 3600.0
+
+
 def test_get_regressions(api_client, mock_store):
     mock_store.get_regressions = AsyncMock(return_value=[
         {"entity_id": "sha256:fn", "base_val": 100.0, "head_val": 150.0, "pct_change": 50.0},
@@ -1514,6 +1607,7 @@ Expected: FAIL — modules not found
 # services/perf-tracker/app/api.py
 from __future__ import annotations
 import json
+import os
 from typing import Optional
 
 from fastapi import APIRouter, Query
@@ -1585,7 +1679,7 @@ async def get_regressions(
     head_sha: str = Query(...),
 ):
     store = _get_store()
-    threshold = 20.0  # could read from env
+    threshold = float(os.environ.get("REGRESSION_THRESHOLD_PCT", "20"))
     return await store.get_regressions(repo, base_sha, head_sha, threshold)
 
 
@@ -1600,11 +1694,16 @@ async def get_trends(
     hours = _parse_window(window)
     points = await store.get_trends(repo, entity_id, metric_name, window_hours=hours)
     slope, direction = compute_trend_slope(points)
+    # Serialize datetimes for JSON response
+    serialized = [
+        {"value": p["value"], "recorded_at": p["recorded_at"].isoformat() if hasattr(p["recorded_at"], "isoformat") else str(p["recorded_at"])}
+        for p in points
+    ]
     return {
         "entity_id": entity_id,
         "metric_name": metric_name,
         "window": window,
-        "points": points,
+        "points": serialized,
         "trend": {"slope": slope, "direction": direction},
     }
 
@@ -1842,6 +1941,34 @@ def test_summary_command(mock_httpx_get, capsys):
     run_command(["summary", "test-repo"], host="localhost", port=8098)
     out = capsys.readouterr().out
     assert "test-repo" in out
+
+
+def test_trends_command(mock_httpx_get, capsys):
+    mock_httpx_get.return_value = MagicMock(
+        status_code=200,
+        json=lambda: {
+            "entity_id": "sha256:fn", "metric_name": "fn_duration", "window": "24h",
+            "points": [{"value": 100.0, "recorded_at": "2026-01-01T00:00:00Z"}],
+            "trend": {"slope": 0.5, "direction": "increasing"},
+        },
+    )
+    from cli import run_command
+    run_command(["trends", "test-repo", "sha256:fn", "--window", "24h"], host="localhost", port=8098)
+    out = capsys.readouterr().out
+    assert "increasing" in out
+
+
+def test_regressions_command(mock_httpx_get, capsys):
+    mock_httpx_get.return_value = MagicMock(
+        status_code=200,
+        json=lambda: [
+            {"entity_id": "sha256:fn", "base_val": 100.0, "head_val": 150.0, "pct_change": 50.0},
+        ],
+    )
+    from cli import run_command
+    run_command(["regressions", "test-repo", "--base", "abc1234", "--head", "def5678"], host="localhost", port=8098)
+    out = capsys.readouterr().out
+    assert "50.0" in out
 
 
 def test_json_output(mock_httpx_get, capsys):
