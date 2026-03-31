@@ -267,6 +267,10 @@ services:
       REPO_ROOT: /repos
       WATCH_MODE: hook
       POLL_INTERVAL_SECONDS: "30"
+      # Hook scripts installed by /install-hook use this URL to call back to the watcher.
+      # localhost:8091 works when hooks run on the host machine (default).
+      # If your repo is inside a Docker container or devcontainer, use host.docker.internal:8091
+      # (Mac/Windows) or your host's docker bridge IP (Linux).
       WATCHER_URL: http://localhost:8091
       ALLOWED_REPO_ROOTS: /repos
     volumes:
