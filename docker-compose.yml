@@ -241,6 +241,21 @@ services:
       timeout: 5s
       retries: 5
 
+  instrumenter:
+    build: ./services/instrumenter
+    ports:
+      - "8093:8080"
+    environment:
+      TIMEOUT_MS: "30000"
+      TEMPDIR_PREFIX: "/tmp/tc"
+    networks:
+      - tersecontext
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   dual-retriever:
     build: ./services/dual-retriever
     ports:
