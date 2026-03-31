@@ -1,7 +1,7 @@
 # services/instrumenter/app/models.py
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, Optional
 
 from pydantic import BaseModel
 
@@ -10,6 +10,8 @@ class InstrumentRequest(BaseModel):
     stable_id: str
     file_path: str
     repo: str
+    capture_args: list[str] = []
+    coverage_filter: Optional[list[str]] = None
 
 
 class PatchSpec(BaseModel):

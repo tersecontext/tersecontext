@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Literal
+from typing import Literal, Optional
 from pydantic import BaseModel, ConfigDict
 
 
@@ -35,3 +35,4 @@ class ExecutionPath(BaseModel):
     never_observed_static_edges: list[EdgeRef]
     timing_p50_ms: float
     timing_p99_ms: float
+    coverage_pct: Optional[float] = None
