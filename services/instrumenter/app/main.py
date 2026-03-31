@@ -6,6 +6,7 @@ import importlib.util
 import inspect
 import logging
 import os
+import shutil
 import signal
 import sys
 import tempfile
@@ -204,6 +205,8 @@ def run(req: RunRequest):
     duration_ms = (time.monotonic() - start) * 1000.0
     events = [e.model_dump() for e in session.events]
 
+    # Clean up session and its tempdir
+    shutil.rmtree(session.tempdir, ignore_errors=True)
     _sessions.pop(req.session_id, None)
     _session_created_at.pop(req.session_id, None)
     _runs_completed += 1
@@ -223,8 +226,10 @@ async def _start_eviction_loop():
                 if now - created > 60
             ]
             for sid in expired:
-                _sessions.pop(sid, None)
+                session = _sessions.pop(sid, None)
                 _session_created_at.pop(sid, None)
+                if session:
+                    shutil.rmtree(session.tempdir, ignore_errors=True)
                 logger.info("Evicted stale session %s", sid)
 
     asyncio.create_task(_evict())

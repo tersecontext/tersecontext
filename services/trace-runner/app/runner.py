@@ -73,6 +73,8 @@ async def run_worker(
     instrumenter_url: str,
     commit_sha: str,
     repos: list[str],
+    repo_dir: str | None = None,
+    capture_args: list[str] | None = None,
 ) -> None:
     """Main BLPOP worker loop. Runs until cancelled."""
     r = aioredis.from_url(redis_url)
@@ -121,6 +123,8 @@ async def run_worker(
                             commit_sha=commit_sha,
                             r=r,
                             instrumenter=instrumenter,
+                            repo_dir=repo_dir,
+                            capture_args=capture_args,
                         ),
                         timeout=30.0,
                     )
