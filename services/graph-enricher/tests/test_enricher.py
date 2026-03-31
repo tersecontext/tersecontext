@@ -1,5 +1,5 @@
 # services/graph-enricher/tests/test_enricher.py
-from unittest.mock import MagicMock, call
+from unittest.mock import MagicMock
 import pytest
 
 from app.enricher import (

@@ -16,10 +16,18 @@ UPSERT_DYNAMIC_EDGES_QUERY = """
 UNWIND $edges AS e
 MATCH (a:Node {stable_id: e.source}), (b:Node {stable_id: e.target})
 MERGE (a)-[r:CALLS]->(b)
-SET r.source = CASE WHEN r.source IN ['static', 'confirmed', 'conflict'] THEN r.source ELSE 'dynamic' END,
+SET r.source = CASE
+      -- Preserve any source already assigned by static analysis or prior traces;
+      -- only assign 'dynamic' when this is a brand-new edge with no prior source.
+      WHEN r.source IN ['static', 'confirmed', 'conflict'] THEN r.source
+      ELSE 'dynamic'
+    END,
     r.observed_count = coalesce(r.observed_count, 0) + e.count
 """
 
+# Confirms static edges where both the caller and callee were observed in the same
+# execution path. Uses set membership rather than explicit edge pairs because the
+# ExecutionPath event does not enumerate confirmed edges directly.
 CONFIRM_STATIC_EDGES_QUERY = """
 UNWIND $stable_ids AS id
 MATCH (a:Node {stable_id: id})-[r:CALLS {source: 'static'}]->(b:Node)
@@ -40,7 +48,7 @@ STALENESS_DOWNGRADE_QUERY = """
 MATCH (a)-[r:CALLS {source: 'confirmed'}]->(b)
 WHERE a.updated_at > r.confirmed_at
 SET r.source = 'static'
-REMOVE r.confirmed_at
+REMOVE r.confirmed_at, r.observed_count
 """
 
 
