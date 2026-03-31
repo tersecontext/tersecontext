@@ -115,6 +115,27 @@ ALLOWED_REPO_ROOTS=/repos
 VOYAGE_API_KEY=              # optional; omit to use local Ollama embeddings
 ```
 
+## Docker networking note
+
+The git hook installed by `POST /install-hook` calls back to `WATCHER_URL` (default `http://localhost:8091`). This works when:
+- Your repo lives on the **host machine** and services run in Docker — `localhost` routes to the host port.
+
+It silently fails when:
+- Your repo lives **inside a Docker container or devcontainer** — `localhost` is that container, not the host.
+
+Fix:
+
+~~~bash
+# Mac / Windows (Docker Desktop)
+WATCHER_URL=http://host.docker.internal:8091 make up
+
+# Linux — find the bridge gateway
+GATEWAY=$(docker network inspect bridge --format='{{(index .IPAM.Config 0).Gateway}}')
+WATCHER_URL=http://${GATEWAY}:8091 make up
+~~~
+
+Or set `WATCHER_URL` permanently in your `.env` file.
+
 ## Makefile Targets
 
 | Target        | Description                              |
@@ -124,3 +145,61 @@ VOYAGE_API_KEY=              # optional; omit to use local Ollama embeddings
 | `make proto`  | Regenerate protobuf bindings             |
 | `make verify` | Run health checks on infrastructure      |
 | `make logs`   | Stream container logs                    |
+
+## Troubleshooting
+
+### Services won't start
+
+1. **Port conflict** — check that ports 8082–8100, 7474, 7687, 6333 are free:
+   ~~~bash
+   ss -tlnp | grep -E '808[0-9]|809[0-9]|810[0-9]|7474|7687|6333'
+   ~~~
+   Kill or reconfigure any process holding those ports, then retry `make up`.
+
+2. **Missing .env** — copy the example and fill in required values:
+   ~~~bash
+   cp .env.example .env
+   ~~~
+   `NEO4J_PASSWORD` and `POSTGRES_PASSWORD` must be set.
+
+3. **Service keeps restarting** — check logs for the failing service:
+   ~~~bash
+   docker compose logs --tail=50 <service-name>
+   ~~~
+   Common cause: Neo4j or Postgres not yet healthy when dependent services start.
+   Wait 30 seconds and re-run `make up`.
+
+### Hook fires but nothing indexes
+
+The most common cause is a networking mismatch — see the [Docker networking note](#docker-networking-note) above. The hook installed by `/install-hook` calls `WATCHER_URL`. If `localhost` doesn't route to the repo-watcher container from where the hook runs, events are never emitted.
+
+Verify the hook is firing and reaching the service:
+~~~bash
+# On the host, tail repo-watcher logs and make a test commit
+docker compose logs -f repo-watcher &
+cd your-repo && git commit --allow-empty -m "test hook"
+# Expect: log line showing POST /hook received
+~~~
+
+If you see no log line, the hook URL is wrong. Fix with:
+~~~bash
+WATCHER_URL=http://host.docker.internal:8091 make up   # Mac/Windows
+~~~
+
+### Queries return empty results
+
+1. Confirm nodes were indexed:
+   ~~~bash
+   curl -sf -u neo4j:localpassword http://localhost:7474/db/neo4j/tx/commit \
+     -H 'Content-Type: application/json' \
+     -d '{"statements":[{"statement":"MATCH (n:Node) RETURN count(n)"}]}'
+   ~~~
+   Expect: `count(n) > 0`. If zero, indexing hasn't completed — check parser and graph-writer logs.
+
+2. Confirm vectors are in Qdrant:
+   ~~~bash
+   curl http://localhost:6333/collections/nodes
+   ~~~
+   Expect: collection exists with `vectors_count > 0`.
+
+3. Check the `repo` field matches what you indexed. The `repo` in your query must match the repo name used during indexing (the directory name under `/repos`).
