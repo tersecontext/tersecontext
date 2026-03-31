@@ -18,7 +18,7 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse, PlainTextResponse
 from pydantic import BaseModel
 
-from .config import PATCH_CATALOG
+from .config import DEFAULT_CAPTURE_ARGS, PATCH_CATALOG
 from .mocking import create_mock_patches
 from .models import InstrumentRequest, InstrumentResponse, PatchSpec
 from .trace import (
@@ -99,6 +99,7 @@ def instrument(req: InstrumentRequest) -> InstrumentResponse:
     td = tempfile.mkdtemp(prefix=f"tc_{session_id}_")
 
     coverage_filter_set = set(req.coverage_filter) if req.coverage_filter else None
+    effective_capture_args = req.capture_args if req.capture_args else DEFAULT_CAPTURE_ARGS
 
     session = TraceSession(
         session_id=session_id,
@@ -106,7 +107,7 @@ def instrument(req: InstrumentRequest) -> InstrumentResponse:
         repo=req.repo,
         stable_id=req.stable_id,
         tempdir=td,
-        capture_args=req.capture_args,
+        capture_args=effective_capture_args,
         coverage_filter=coverage_filter_set,
     )
     _sessions[session_id] = session
