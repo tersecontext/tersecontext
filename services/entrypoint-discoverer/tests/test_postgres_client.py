@@ -1,6 +1,6 @@
 # tests/test_postgres_client.py
 from datetime import datetime, timezone
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 from app.postgres_client import query_last_traced
 
 

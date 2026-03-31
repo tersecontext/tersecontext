@@ -1,10 +1,7 @@
 # app/scorer.py
 from __future__ import annotations
-from datetime import datetime, timezone, timedelta
 
 from .models import EntrypointJob
-
-_THIRTY_DAYS = timedelta(days=30)
 
 
 def score_entrypoints(

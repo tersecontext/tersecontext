@@ -1,6 +1,5 @@
 # app/neo4j_client.py
 from __future__ import annotations
-from datetime import datetime
 
 ENTRYPOINT_QUERY = """
 MATCH (n:Node {repo: $repo, active: true})
