@@ -10,6 +10,7 @@ class EntrypointJob(BaseModel):
     file_path: str
     priority: int
     repo: str
+    language: str = "python"
 
 
 class DiscoverRequest(BaseModel):
