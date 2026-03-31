@@ -53,45 +53,6 @@ def _extract_table(detail: str) -> str:
     return detail.split()[0] if detail.split() else detail
 
 
-def _format_db_detail(detail: str) -> str:
-    """Reformat a DB detail to omit the table name (shown in CHANGE_IMPACT instead).
-
-    Returns a short description of the operation without repeating the table name,
-    so that CHANGE_IMPACT is the single source of truth for table names in the output.
-
-    Examples:
-      "SELECT id FROM users WHERE id = $1"  -> "WHERE id = $1"
-      "INSERT INTO audit_log VALUES (...)"   -> "INSERT"
-      "UPDATE users SET active = false"      -> "SET active = false"
-      "DELETE FROM sessions WHERE ..."       -> "WHERE ..."
-    """
-    table = _extract_table(detail)
-    upper = detail.upper()
-
-    # After FROM/INTO: grab everything after the table name
-    for kw in ("FROM", "INTO"):
-        kw_upper = kw + " " + table.upper()
-        pos = upper.find(kw_upper)
-        if pos != -1:
-            after = detail[pos + len(kw_upper):].strip()
-            if after:
-                return after
-            # No remainder — just return the leading SQL verb
-            first_word = detail.split()[0].upper() if detail.split() else ""
-            return first_word or detail
-
-    # For UPDATE: everything after "UPDATE {table} "
-    if upper.startswith("UPDATE "):
-        after_table = detail[len("UPDATE ") + len(table):].strip()
-        if after_table:
-            return after_table
-        return "UPDATE"
-
-    # Fallback: return the leading SQL verb (INSERT, DELETE, etc.) or the raw detail
-    first_word = detail.split()[0].upper() if detail.split() else ""
-    return first_word or detail
-
-
 def _extract_service(detail: str) -> str:
     """Extract hostname from an HTTP OUT detail like 'POST https://host/path'."""
     match = re.search(r"https?://([^/\s]+)", detail)
@@ -119,6 +80,7 @@ def render_spec_text(path: ExecutionPath, entrypoint_name: str) -> str:
         for effect in path.side_effects:
             label = _SIDE_EFFECT_LABELS.get(effect.type, effect.type.upper().replace("_", " "))
             suffix = "   (conditional)" if effect.hop_depth > 1 else ""
+            # Show full detail as-is — downstream consumers (serializer) benefit from the full SQL context
             display = effect.detail
             lines.append(f"  {label}   {display}{suffix}")
         lines.append("")
