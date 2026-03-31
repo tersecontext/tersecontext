@@ -283,6 +283,29 @@ services:
       retries: 5
       start_period: 15s
 
+  trace-runner:
+    build: ./services/trace-runner
+    ports:
+      - "8094:8080"
+    environment:
+      REDIS_URL: redis://redis:6379
+      INSTRUMENTER_URL: http://instrumenter:8080
+      COMMIT_SHA: unknown
+      REPOS: "test"
+    depends_on:
+      redis:
+        condition: service_healthy
+      instrumenter:
+        condition: service_healthy
+    networks:
+      - tersecontext
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
   dual-retriever:
     build: ./services/dual-retriever
     ports:
