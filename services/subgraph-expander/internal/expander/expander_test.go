@@ -28,6 +28,21 @@ func (m *mockSpecChecker) FetchBehaviorSpecs(ctx context.Context, ids []string) 
 	return result, nil
 }
 
+// mockHydrator implements SeedHydrator.
+type mockHydrator struct{}
+
+func (m *mockHydrator) HydrateSeeds(ctx context.Context, stableIDs []string) (map[string]BFSState, error) {
+	out := make(map[string]BFSState, len(stableIDs))
+	for _, id := range stableIDs {
+		out[id] = BFSState{
+			StableID:  id,
+			Body:      "hydrated body for " + id,
+			Signature: "hydrated sig",
+		}
+	}
+	return out, nil
+}
+
 // mockEdgeCollector implements EdgeCollector.
 type mockEdgeCollector struct {
 	edges         []*querypb.SubgraphEdge
@@ -49,7 +64,7 @@ func TestExpander_BasicFlow(t *testing.T) {
 			"seed1": {{StableID: "n1", ParentID: "seed1", EdgeType: "CALLS", Provenance: "static"}},
 		},
 	}
-	exp := New(fetcher, &mockSpecChecker{}, &mockEdgeCollector{})
+	exp := New(fetcher, &mockHydrator{}, &mockSpecChecker{}, &mockEdgeCollector{})
 
 	seeds := []*querypb.SeedNode{{StableId: "seed1", Name: "auth", Score: 1.0}}
 	resp, err := exp.Expand(context.Background(), seeds, "flow", 2000, 2, 0.7)
@@ -87,7 +102,7 @@ func TestExpander_BudgetRespected(t *testing.T) {
 	fetcher := &mockFetcher{
 		neighbors: map[string][]BFSState{"seed1": neighbors},
 	}
-	exp := New(fetcher, &mockSpecChecker{}, &mockEdgeCollector{})
+	exp := New(fetcher, &mockHydrator{}, &mockSpecChecker{}, &mockEdgeCollector{})
 
 	seeds := []*querypb.SeedNode{{StableId: "seed1", Score: 1.0}}
 	// maxTokens=160: 120 (seed without spec) + 20 (one peripheral) = 140; two = 160
@@ -108,7 +123,7 @@ func TestExpander_ConflictEdgesAlwaysIncluded(t *testing.T) {
 		conflictEdges: []*querypb.SubgraphEdge{conflictEdge},
 		warnings:      []*querypb.SubgraphWarning{warning},
 	}
-	exp := New(fetcher, &mockSpecChecker{}, collector)
+	exp := New(fetcher, &mockHydrator{}, &mockSpecChecker{}, collector)
 
 	seeds := []*querypb.SeedNode{{StableId: "seed1", Score: 1.0}}
 	resp, err := exp.Expand(context.Background(), seeds, "flow", 1, 1, 0.7) // tiny budget
@@ -121,7 +136,7 @@ func TestExpander_ConflictEdgesAlwaysIncluded(t *testing.T) {
 }
 
 func TestExpander_EmptySeeds(t *testing.T) {
-	exp := New(&mockFetcher{}, &mockSpecChecker{}, &mockEdgeCollector{})
+	exp := New(&mockFetcher{}, &mockHydrator{}, &mockSpecChecker{}, &mockEdgeCollector{})
 	resp, err := exp.Expand(context.Background(), nil, "flow", 2000, 2, 0.7)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -133,7 +148,7 @@ func TestExpander_EmptySeeds(t *testing.T) {
 
 func TestExpander_UnknownQueryType(t *testing.T) {
 	// mockFetcher error is unreachable since validation fires before BFS.
-	exp := New(&mockFetcher{}, &mockSpecChecker{}, &mockEdgeCollector{})
+	exp := New(&mockFetcher{}, &mockHydrator{}, &mockSpecChecker{}, &mockEdgeCollector{})
 	seeds := []*querypb.SeedNode{{StableId: "seed1", Score: 1.0}}
 	_, err := exp.Expand(context.Background(), seeds, "bogus", 2000, 1, 0.7)
 	if !errors.Is(err, ErrInvalidQueryType) {
@@ -144,7 +159,7 @@ func TestExpander_UnknownQueryType(t *testing.T) {
 func TestExpander_SpecCheckerFailsDegradeGracefully(t *testing.T) {
 	fetcher := &mockFetcher{neighbors: map[string][]BFSState{}}
 	badSpec := &mockSpecChecker{err: fmt.Errorf("postgres down")}
-	exp := New(fetcher, badSpec, &mockEdgeCollector{})
+	exp := New(fetcher, &mockHydrator{}, badSpec, &mockEdgeCollector{})
 
 	seeds := []*querypb.SeedNode{{StableId: "seed1", Score: 1.0}}
 	// Should not error; should treat seed as having no spec

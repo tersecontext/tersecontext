@@ -26,6 +26,11 @@ type BFSState struct {
 	FrequencyRatio float64
 }
 
+// SeedHydrator fetches full node data for seed nodes from the graph.
+type SeedHydrator interface {
+	HydrateSeeds(ctx context.Context, stableIDs []string) (map[string]BFSState, error)
+}
+
 // NeighborFetcher retrieves neighbors for a batch of nodes from the graph.
 // The returned BFSState values have ParentID, EdgeType, and Provenance set;
 // Score and Hop are set by the BFS loop.

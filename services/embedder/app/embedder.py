@@ -2,10 +2,17 @@ from .models import EmbeddedNode, ParsedNode
 from .providers.base import EmbeddingProvider
 
 
+MAX_BODY_CHARS = 512
+
+
 def build_embed_text(node: ParsedNode) -> str:
     parts = [node.name, node.signature]
     if node.docstring:
         parts.append(node.docstring)
+    if node.body:
+        # Include a truncated body snippet for richer semantic content.
+        body = node.body[:MAX_BODY_CHARS]
+        parts.append(body)
     return " ".join(parts)
 
 

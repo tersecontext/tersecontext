@@ -108,24 +108,33 @@ def _make_node(name: str, signature: str, docstring: str = "", body: str = "pass
 
 def test_build_embed_text_no_docstring():
     from app.embedder import build_embed_text
-    node = _make_node("foo", "foo(x: int) -> str", docstring="")
+    node = _make_node("foo", "foo(x: int) -> str", docstring="", body="")
     result = build_embed_text(node)
     assert result == "foo foo(x: int) -> str"
 
 
 def test_build_embed_text_with_docstring():
     from app.embedder import build_embed_text
-    node = _make_node("foo", "foo(x: int) -> str", docstring="Does something useful")
+    node = _make_node("foo", "foo(x: int) -> str", docstring="Does something useful", body="")
     result = build_embed_text(node)
     assert result == "foo foo(x: int) -> str Does something useful"
 
 
-def test_build_embed_text_never_includes_body():
+def test_build_embed_text_includes_body():
     from app.embedder import build_embed_text
     node = _make_node("foo", "foo()", body="x = 1\ny = 2\nreturn x + y")
     result = build_embed_text(node)
-    assert "x = 1" not in result
-    assert "return x + y" not in result
+    assert "x = 1" in result
+    assert "return x + y" in result
+
+
+def test_build_embed_text_truncates_long_body():
+    from app.embedder import build_embed_text, MAX_BODY_CHARS
+    long_body = "a" * 1000
+    node = _make_node("foo", "foo()", body=long_body)
+    result = build_embed_text(node)
+    assert len(result) < len(long_body)
+    assert "a" * MAX_BODY_CHARS in result
 
 
 # ── embed_nodes ───────────────────────────────────────────────────────────────

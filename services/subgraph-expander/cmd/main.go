@@ -90,7 +90,7 @@ func main() {
 	if pgClient != nil {
 		specChecker = pgClient
 	}
-	exp := expander.New(neo4jClient, specChecker, neo4jClient)
+	exp := expander.New(neo4jClient, neo4jClient, specChecker, neo4jClient)
 
 	// --- gRPC server ---
 	lis, err := net.Listen("tcp", ":"+grpcPort)
