@@ -241,6 +241,31 @@ services:
       timeout: 5s
       retries: 5
 
+  entrypoint-discoverer:
+    build: ./services/entrypoint-discoverer
+    ports:
+      - "8092:8080"
+    environment:
+      REDIS_URL: redis://redis:6379
+      NEO4J_URL: bolt://neo4j:7687
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: localpassword
+      POSTGRES_DSN: postgres://tersecontext:localpassword@postgres:5432/tersecontext
+    depends_on:
+      redis:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    networks:
+      - tersecontext
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   dual-retriever:
     build: ./services/dual-retriever
     ports:
