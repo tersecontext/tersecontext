@@ -31,7 +31,7 @@ func main() {
 	mux.HandleFunc("GET /health", handlers.Health)
 	mux.HandleFunc("GET /ready", handlers.Ready(&ready))
 	mux.HandleFunc("GET /metrics", handlers.Metrics)
-	// POST /instrument will be added in Task 6
+	mux.HandleFunc("POST /instrument", handlers.Instrument(sessMgr))
 
 	srv := &http.Server{Addr: ":" + port, Handler: mux}
 
