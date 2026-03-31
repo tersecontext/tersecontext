@@ -30,7 +30,7 @@ PATH A1 (* seed · 47 runs observed)
   2b. [not found]       3/47 runs    exits early → returns None
   3.  log              44/47 runs   conditional · success path
 
-PATH A2
+PATH A2 (* seed · 47 runs observed)
   1.  bcrypt.hashpw     47/47 runs   ~1ms
 
 BODY B1 (* static · no spec)
