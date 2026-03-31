@@ -80,7 +80,11 @@ class RedisConsumerBase(ABC):
                                 logger.warning("Bad message %s → DLQ: %s", msg_id, exc)
                                 await r.xadd(
                                     dlq_stream,
-                                    {b"msg_id": str(msg_id).encode(), b"error": str(exc).encode()},
+                                    {
+                                        b"msg_id": str(msg_id).encode(),
+                                        b"error": str(exc).encode(),
+                                        b"data": str(data).encode(),
+                                    },
                                 )
                                 await r.xack(self.stream, self.group, msg_id)
                             except asyncio.CancelledError:
