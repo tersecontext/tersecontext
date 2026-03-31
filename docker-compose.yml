@@ -38,7 +38,7 @@ services:
   neo4j:
     image: neo4j:5
     environment:
-      NEO4J_AUTH: neo4j/localpassword
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:-localpassword}
       NEO4J_PLUGINS: '["apoc"]'
     ports:
       - "7474:7474"
@@ -82,7 +82,7 @@ services:
     environment:
       POSTGRES_DB: tersecontext
       POSTGRES_USER: tersecontext
-      POSTGRES_PASSWORD: localpassword
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-localpassword}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
@@ -130,7 +130,7 @@ services:
       REDIS_URL: redis://redis:6379
       NEO4J_URL: bolt://neo4j:7687
       NEO4J_USER: neo4j
-      NEO4J_PASSWORD: localpassword
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-localpassword}
       EMBEDDING_PROVIDER: ollama
       OLLAMA_URL: http://ollama:11434
       EMBEDDING_MODEL: nomic-embed-text
@@ -182,7 +182,7 @@ services:
       REDIS_URL: redis://redis:6379
       NEO4J_URL: bolt://neo4j:7687
       NEO4J_USER: neo4j
-      NEO4J_PASSWORD: localpassword
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-localpassword}
     depends_on:
       redis:
         condition: service_healthy
@@ -204,7 +204,7 @@ services:
       REDIS_URL: redis://redis:6379
       NEO4J_URL: bolt://neo4j:7687
       NEO4J_USER: neo4j
-      NEO4J_PASSWORD: localpassword
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-localpassword}
     depends_on:
       redis:
         condition: service_healthy
@@ -226,7 +226,7 @@ services:
       REDIS_URL: redis://redis:6379
       NEO4J_URL: bolt://neo4j:7687
       NEO4J_USER: neo4j
-      NEO4J_PASSWORD: localpassword
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-localpassword}
     depends_on:
       redis:
         condition: service_healthy
@@ -250,6 +250,7 @@ services:
       WATCH_MODE: hook
       POLL_INTERVAL_SECONDS: "30"
       WATCHER_URL: http://localhost:8091
+      ALLOWED_REPO_ROOTS: /repos
     volumes:
       - ./services/repo-watcher/tests/fixtures:/repos
     depends_on:
@@ -271,8 +272,8 @@ services:
       REDIS_URL: redis://redis:6379
       NEO4J_URL: bolt://neo4j:7687
       NEO4J_USER: neo4j
-      NEO4J_PASSWORD: localpassword
-      POSTGRES_DSN: postgres://tersecontext:localpassword@postgres:5432/tersecontext
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-localpassword}
+      POSTGRES_DSN: postgres://tersecontext:${POSTGRES_PASSWORD:-localpassword}@postgres:5432/tersecontext
     depends_on:
       redis:
         condition: service_healthy
@@ -335,7 +336,7 @@ services:
     environment:
       NEO4J_URL: bolt://neo4j:7687
       NEO4J_USER: neo4j
-      NEO4J_PASSWORD: localpassword
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-localpassword}
       QDRANT_URL: http://qdrant:6333
       EMBEDDER_URL: http://embedder:8080
     depends_on:
@@ -360,8 +361,8 @@ services:
     environment:
       NEO4J_URI: bolt://neo4j:7687
       NEO4J_USER: neo4j
-      NEO4J_PASSWORD: localpassword
-      POSTGRES_DSN: postgres://tersecontext:localpassword@postgres:5432/tersecontext
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-localpassword}
+      POSTGRES_DSN: postgres://tersecontext:${POSTGRES_PASSWORD:-localpassword}@postgres:5432/tersecontext
       GRPC_PORT: "8088"
       EXPANDER_HOP_DEPTH: "2"
       EXPANDER_DECAY: "0.7"
@@ -426,7 +427,7 @@ services:
       REDIS_URL: redis://redis:6379
       NEO4J_URL: bolt://neo4j:7687
       NEO4J_USER: neo4j
-      NEO4J_PASSWORD: localpassword
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-localpassword}
     depends_on:
       redis:
         condition: service_healthy
@@ -439,7 +440,7 @@ services:
       - "8097:8080"
     environment:
       REDIS_URL: redis://redis:6379
-      POSTGRES_DSN: postgres://tersecontext:localpassword@postgres:5432/tersecontext
+      POSTGRES_DSN: postgres://tersecontext:${POSTGRES_PASSWORD:-localpassword}@postgres:5432/tersecontext
       QDRANT_URL: http://qdrant:6333
       EMBEDDING_PROVIDER: ollama
       OLLAMA_URL: http://ollama:11434
@@ -470,7 +471,7 @@ services:
       neo4j:
         condition: service_healthy
     entrypoint: >
-      bash -c "cypher-shell -u neo4j -p localpassword -a bolt://neo4j:7687
+      bash -c "cypher-shell -u neo4j -p $${NEO4J_PASSWORD:-localpassword} -a bolt://neo4j:7687
       < /startup/neo4j-init.cypher && echo 'neo4j-init: done'"
     volumes:
       - ./docker/neo4j-init.cypher:/startup/neo4j-init.cypher:ro

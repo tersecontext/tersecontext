@@ -76,7 +76,7 @@ async def ready():
         await _get_redis().ping()
         return {"status": "ok"}
     except Exception as exc:
-        return JSONResponse(status_code=503, content={"status": "unavailable", "error": str(exc)})
+        return JSONResponse(status_code=503, content={"status": "unavailable", "error": "redis unavailable"})
 
 
 @app.get("/metrics")

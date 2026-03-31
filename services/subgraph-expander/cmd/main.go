@@ -52,7 +52,11 @@ func main() {
 	grpcPort := env("GRPC_PORT", "8088")
 	neo4jURI := env("NEO4J_URI", "bolt://neo4j:7687")
 	neo4jUser := env("NEO4J_USER", "neo4j")
-	neo4jPassword := env("NEO4J_PASSWORD", "localpassword")
+	neo4jPassword := os.Getenv("NEO4J_PASSWORD")
+	if neo4jPassword == "" {
+		slog.Error("NEO4J_PASSWORD environment variable is required")
+		os.Exit(1)
+	}
 	postgresDSN := env("POSTGRES_DSN", "")
 	hopDepth := envInt("EXPANDER_HOP_DEPTH", 2)
 	decay := envFloat("EXPANDER_DECAY", 0.7)

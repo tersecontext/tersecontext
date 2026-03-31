@@ -4,6 +4,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
+import shlex
 import stat
 import subprocess
 from contextlib import asynccontextmanager
@@ -70,7 +72,7 @@ def ready():
         _get_redis().ping()
         return {"status": "ok"}
     except Exception as exc:
-        return JSONResponse(status_code=503, content={"status": "unavailable", "error": str(exc)})
+        return JSONResponse(status_code=503, content={"status": "unavailable", "error": "redis unavailable"})
 
 
 @app.get("/metrics")
@@ -94,7 +96,7 @@ def hook(req: HookRequest):
         return {"events_emitted": events, "files_changed": files}
     except Exception as exc:
         logger.error("Hook processing failed: %s", exc)
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail="Hook processing failed")
 
 
 @app.post("/index", status_code=202)
@@ -119,7 +121,7 @@ def index(req: IndexRequest):
         return {"queued": True}
     except Exception as exc:
         logger.error("Index processing failed: %s", exc)
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail="Index processing failed")
 
 
 @app.get("/status")
@@ -131,6 +133,11 @@ def status(repo_path: str = ""):
     r = _get_redis()
     if not repo_path:
         repo_path = os.environ.get("REPO_ROOT", "/repos")
+    from .models import _validate_repo_path
+    try:
+        repo_path = _validate_repo_path(repo_path)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     repo = _repo_name(repo_path)
     last_sha = _get_last_sha(r, repo) or ""
     return {
@@ -148,10 +155,13 @@ def install_hook(req: InstallHookRequest):
         raise HTTPException(status_code=400, detail="Not a git repository")
 
     watcher_url = os.environ.get("WATCHER_URL", "http://localhost:8091")
+    if not re.fullmatch(r"https?://[A-Za-z0-9._:/-]+", watcher_url):
+        raise HTTPException(status_code=500, detail="WATCHER_URL contains invalid characters")
+    safe_url = shlex.quote(watcher_url)
     hook_path = os.path.join(hook_dir, "post-commit")
     hook_script = (
         "#!/bin/bash\n"
-        f'curl -s -X POST {watcher_url}/hook \\\n'
+        f'curl -s -X POST {safe_url}/hook \\\n'
         '  -H \'Content-Type: application/json\' \\\n'
         '  -d "{\\"repo_path\\": \\"$(pwd)\\", \\"commit_sha\\": \\"$(git rev-parse HEAD)\\"}"'
         "\n"
