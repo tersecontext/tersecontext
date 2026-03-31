@@ -296,8 +296,10 @@ def reset_redis_client():
 
 def test_health_returns_200():
     from fastapi.testclient import TestClient
-    client = TestClient(fastapi_app)
-    resp = client.get("/health")
+    from unittest.mock import patch, AsyncMock
+    with patch("app.main._start_worker", new=AsyncMock(return_value=None)):
+        with TestClient(fastapi_app) as client:
+            resp = client.get("/health")
     assert resp.status_code == 200
     data = resp.json()
     assert data["status"] == "ok"
@@ -305,19 +307,23 @@ def test_health_returns_200():
 
 
 def test_ready_returns_503_when_redis_down():
-    from unittest.mock import MagicMock
     from fastapi.testclient import TestClient
-    mock_redis = MagicMock()
-    mock_redis.ping.side_effect = Exception("connection refused")
-    main_module._redis_client = mock_redis
-    client = TestClient(fastapi_app)
-    resp = client.get("/ready")
+    from unittest.mock import patch, AsyncMock
+    with patch("app.main._start_worker", new=AsyncMock(return_value=None)):
+        with patch("app.main._get_redis") as mock_get_redis:
+            mock_r = AsyncMock()
+            mock_r.ping.side_effect = Exception("connection refused")
+            mock_get_redis.return_value = mock_r
+            with TestClient(fastapi_app) as client:
+                resp = client.get("/ready")
     assert resp.status_code == 503
 
 
 def test_metrics_returns_prometheus_text():
     from fastapi.testclient import TestClient
-    client = TestClient(fastapi_app)
-    resp = client.get("/metrics")
+    from unittest.mock import patch, AsyncMock
+    with patch("app.main._start_worker", new=AsyncMock(return_value=None)):
+        with TestClient(fastapi_app) as client:
+            resp = client.get("/metrics")
     assert resp.status_code == 200
     assert "trace_runner_jobs_processed_total" in resp.text
