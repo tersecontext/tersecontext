@@ -15,3 +15,10 @@ PATCH_CATALOG: list[dict] = [
 
 # Validate entire catalog against PatchSpec on import — fails fast if catalog has typos
 _validated: list[PatchSpec] = [PatchSpec(**entry) for entry in PATCH_CATALOG]
+
+DEFAULT_CAPTURE_ARGS: list[str] = [
+    "test_*",
+    "*_handler",
+    "*_view",
+    "db_*",
+]

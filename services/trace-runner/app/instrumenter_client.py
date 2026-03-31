@@ -8,11 +8,25 @@ class InstrumenterClient:
         self._base_url = base_url.rstrip("/")
         self._client = httpx.AsyncClient(timeout=timeout)
 
-    async def instrument(self, stable_id: str, file_path: str, repo: str) -> str:
+    async def instrument(
+        self,
+        stable_id: str,
+        file_path: str,
+        repo: str,
+        capture_args: list[str] | None = None,
+        coverage_filter: list[str] | None = None,
+    ) -> str:
         """Call /instrument, return session_id."""
+        payload = {
+            "stable_id": stable_id,
+            "file_path": file_path,
+            "repo": repo,
+            "capture_args": capture_args or [],
+            "coverage_filter": coverage_filter,
+        }
         resp = await self._client.post(
             f"{self._base_url}/instrument",
-            json={"stable_id": stable_id, "file_path": file_path, "repo": repo},
+            json=payload,
         )
         resp.raise_for_status()
         return resp.json()["session_id"]

@@ -9,6 +9,51 @@ import (
 	"github.com/tersecontext/tc/services/subgraph-expander/internal/expander"
 )
 
+// HydrateSeeds fetches full node data (body, signature, docstring) for seed nodes.
+func (c *Client) HydrateSeeds(ctx context.Context, stableIDs []string) (map[string]expander.BFSState, error) {
+	session := c.driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeRead})
+	defer session.Close(ctx)
+
+	result, err := session.Run(ctx, `
+		MATCH (n:Node)
+		WHERE n.stable_id IN $stable_ids AND n.active = true
+		RETURN n.stable_id AS stable_id,
+		       n.name      AS name,
+		       n.type      AS type,
+		       n.signature AS signature,
+		       n.docstring AS docstring,
+		       n.body      AS body`, map[string]interface{}{"stable_ids": stableIDs})
+	if err != nil {
+		return nil, fmt.Errorf("neo4j HydrateSeeds: %w", err)
+	}
+
+	out := make(map[string]expander.BFSState, len(stableIDs))
+	for result.Next(ctx) {
+		rec := result.Record()
+		var n expander.BFSState
+		if v, ok := rec.Get("stable_id"); ok && v != nil {
+			n.StableID = v.(string)
+		}
+		if v, ok := rec.Get("name"); ok && v != nil {
+			n.Name = v.(string)
+		}
+		if v, ok := rec.Get("type"); ok && v != nil {
+			n.Type = v.(string)
+		}
+		if v, ok := rec.Get("signature"); ok && v != nil {
+			n.Signature = v.(string)
+		}
+		if v, ok := rec.Get("docstring"); ok && v != nil {
+			n.Docstring = v.(string)
+		}
+		if v, ok := rec.Get("body"); ok && v != nil {
+			n.Body = v.(string)
+		}
+		out[n.StableID] = n
+	}
+	return out, result.Err()
+}
+
 // FetchNeighbors fetches one hop of neighbors for the given stable IDs.
 // For "impact" queries the direction is reversed (callers of seeds).
 func (c *Client) FetchNeighbors(ctx context.Context, stableIDs []string, queryType string) ([]expander.BFSState, error) {

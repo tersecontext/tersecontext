@@ -74,6 +74,8 @@ func main() {
 	mux.HandleFunc("GET /metrics", handlers.Metrics)
 	mux.HandleFunc("POST /query", queryHandler.Handle)
 	mux.HandleFunc("POST /index", indexHandler.Handle)
+	mux.HandleFunc("GET /repos", handlers.Repos(redisClient))
+	mux.Handle("GET /", http.FileServer(http.Dir("/static")))
 
 	// Middleware chain: TraceID → Logging → mux
 	handler := middleware.TraceID(middleware.Logging(mux))
@@ -101,5 +103,6 @@ func main() {
 	}
 }
 
-// Ensure *redis.Client satisfies handlers.StreamAdder at compile time.
+// Ensure *redis.Client satisfies handler interfaces at compile time.
 var _ handlers.StreamAdder = (*redis.Client)(nil)
+var _ handlers.Scanner = (*redis.Client)(nil)

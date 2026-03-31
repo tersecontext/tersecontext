@@ -5,6 +5,9 @@ toolchain go1.24.1
 use (
 	./services/api-gateway
 	./services/dual-retriever
+	./services/go-instrumenter
+	./services/go-trace-runner
 	./services/serializer
 	./services/subgraph-expander
+	./services/tracert
 )

@@ -5,6 +5,8 @@ import logging
 import os
 from contextlib import asynccontextmanager
 
+logging.basicConfig(level=logging.INFO)
+
 import redis.asyncio as aioredis
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse, PlainTextResponse
@@ -31,6 +33,8 @@ async def _start_worker() -> asyncio.Task:
 
     redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379")
     instrumenter_url = os.environ.get("INSTRUMENTER_URL", "http://localhost:8093")
+    go_instrumenter_url = os.environ.get("GO_INSTRUMENTER_URL", "")
+    go_trace_runner_url = os.environ.get("GO_TRACE_RUNNER_URL", "")
     commit_sha = os.environ.get("COMMIT_SHA", "unknown")
     repos_raw = os.environ.get("REPOS", "")
     repos = [r.strip() for r in repos_raw.split(",") if r.strip()]
@@ -41,6 +45,8 @@ async def _start_worker() -> asyncio.Task:
             instrumenter_url=instrumenter_url,
             commit_sha=commit_sha,
             repos=repos,
+            go_instrumenter_url=go_instrumenter_url or None,
+            go_trace_runner_url=go_trace_runner_url or None,
         )
     )
 
@@ -76,7 +82,7 @@ async def ready():
         await _get_redis().ping()
         return {"status": "ok"}
     except Exception as exc:
-        return JSONResponse(status_code=503, content={"status": "unavailable", "error": str(exc)})
+        return JSONResponse(status_code=503, content={"status": "unavailable", "error": "redis unavailable"})
 
 
 @app.get("/metrics")

@@ -18,7 +18,7 @@ class Neo4jClient:
     def __init__(self) -> None:
         url = os.environ.get("NEO4J_URL", "bolt://localhost:7687")
         user = os.environ.get("NEO4J_USER", "neo4j")
-        password = os.environ.get("NEO4J_PASSWORD", "")
+        password = os.environ["NEO4J_PASSWORD"]
         self._driver = neo4j.GraphDatabase.driver(url, auth=(user, password))
 
     def verify_connectivity(self) -> None:

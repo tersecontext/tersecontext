@@ -38,7 +38,7 @@ services:
   neo4j:
     image: neo4j:5
     environment:
-      NEO4J_AUTH: neo4j/localpassword
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:-localpassword}
       NEO4J_PLUGINS: '["apoc"]'
     ports:
       - "7474:7474"
@@ -82,7 +82,7 @@ services:
     environment:
       POSTGRES_DB: tersecontext
       POSTGRES_USER: tersecontext
-      POSTGRES_PASSWORD: localpassword
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-localpassword}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
@@ -130,7 +130,7 @@ services:
       REDIS_URL: redis://redis:6379
       NEO4J_URL: bolt://neo4j:7687
       NEO4J_USER: neo4j
-      NEO4J_PASSWORD: localpassword
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-localpassword}
       EMBEDDING_PROVIDER: ollama
       OLLAMA_URL: http://ollama:11434
       EMBEDDING_MODEL: nomic-embed-text
@@ -174,6 +174,24 @@ services:
       timeout: 5s
       retries: 5
 
+  parser:
+    build: ./services/parser
+    environment:
+      REDIS_URL: redis://redis:6379
+      REPO_ROOT: /repos
+    volumes:
+      - ~/workspaces:/repos:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - tersecontext
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   graph-writer:
     build: ./services/graph-writer
     ports:
@@ -182,7 +200,7 @@ services:
       REDIS_URL: redis://redis:6379
       NEO4J_URL: bolt://neo4j:7687
       NEO4J_USER: neo4j
-      NEO4J_PASSWORD: localpassword
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-localpassword}
     depends_on:
       redis:
         condition: service_healthy
@@ -204,7 +222,7 @@ services:
       REDIS_URL: redis://redis:6379
       NEO4J_URL: bolt://neo4j:7687
       NEO4J_USER: neo4j
-      NEO4J_PASSWORD: localpassword
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-localpassword}
     depends_on:
       redis:
         condition: service_healthy
@@ -226,7 +244,7 @@ services:
       REDIS_URL: redis://redis:6379
       NEO4J_URL: bolt://neo4j:7687
       NEO4J_USER: neo4j
-      NEO4J_PASSWORD: localpassword
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-localpassword}
     depends_on:
       redis:
         condition: service_healthy
@@ -250,8 +268,9 @@ services:
       WATCH_MODE: hook
       POLL_INTERVAL_SECONDS: "30"
       WATCHER_URL: http://localhost:8091
+      ALLOWED_REPO_ROOTS: /repos
     volumes:
-      - ./services/repo-watcher/tests/fixtures:/repos
+      - ~/workspaces:/repos
     depends_on:
       redis:
         condition: service_healthy
@@ -271,8 +290,8 @@ services:
       REDIS_URL: redis://redis:6379
       NEO4J_URL: bolt://neo4j:7687
       NEO4J_USER: neo4j
-      NEO4J_PASSWORD: localpassword
-      POSTGRES_DSN: postgres://tersecontext:localpassword@postgres:5432/tersecontext
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-localpassword}
+      POSTGRES_DSN: postgres://tersecontext:${POSTGRES_PASSWORD:-localpassword}@postgres:5432/tersecontext
     depends_on:
       redis:
         condition: service_healthy
@@ -309,16 +328,24 @@ services:
     build: ./services/trace-runner
     ports:
       - "8094:8080"
+    volumes:
+      - ~/workspaces:/repos:ro
     environment:
       REDIS_URL: redis://redis:6379
       INSTRUMENTER_URL: http://instrumenter:8080
+      GO_INSTRUMENTER_URL: http://go-instrumenter:8098
+      GO_TRACE_RUNNER_URL: http://go-trace-runner:8099
       COMMIT_SHA: unknown
-      REPOS: "test"
+      REPOS: "gastown"
     depends_on:
       redis:
         condition: service_healthy
       instrumenter:
         condition: service_healthy
+      go-instrumenter:
+        condition: service_healthy
+      go-trace-runner:
+        condition: service_started
     networks:
       - tersecontext
     healthcheck:
@@ -335,7 +362,7 @@ services:
     environment:
       NEO4J_URL: bolt://neo4j:7687
       NEO4J_USER: neo4j
-      NEO4J_PASSWORD: localpassword
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-localpassword}
       QDRANT_URL: http://qdrant:6333
       EMBEDDER_URL: http://embedder:8080
     depends_on:
@@ -360,8 +387,8 @@ services:
     environment:
       NEO4J_URI: bolt://neo4j:7687
       NEO4J_USER: neo4j
-      NEO4J_PASSWORD: localpassword
-      POSTGRES_DSN: postgres://tersecontext:localpassword@postgres:5432/tersecontext
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-localpassword}
+      POSTGRES_DSN: postgres://tersecontext:${POSTGRES_PASSWORD:-localpassword}@postgres:5432/tersecontext
       GRPC_PORT: "8088"
       EXPANDER_HOP_DEPTH: "2"
       EXPANDER_DECAY: "0.7"
@@ -418,6 +445,54 @@ services:
       timeout: 5s
       retries: 5
 
+  go-instrumenter:
+    build: ./services/go-instrumenter
+    ports:
+      - "8098:8098"
+    volumes:
+      - ~/workspaces:/repos:ro
+      - /tmp/go-trace-sessions:/tmp/sessions
+      - ./services/tracert:/app/tracert:ro
+    environment:
+      PORT: "8098"
+      SESSIONS_DIR: /tmp/sessions
+      TRACERT_PATH: /app/tracert
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - tersecontext
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8098/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  go-trace-runner:
+    build: ./services/go-trace-runner
+    ports:
+      - "8099:8099"
+    volumes:
+      - /tmp/go-trace-sessions:/tmp/sessions
+    environment:
+      PORT: "8099"
+      SESSIONS_DIR: /tmp/sessions
+      REDIS_URL: redis://redis:6379
+      INSTRUMENTER_URL: http://go-instrumenter:8098
+    depends_on:
+      redis:
+        condition: service_healthy
+      go-instrumenter:
+        condition: service_healthy
+    networks:
+      - tersecontext
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8099/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   trace-normalizer:
     build: ./services/trace-normalizer
     ports:
@@ -426,12 +501,14 @@ services:
       REDIS_URL: redis://redis:6379
       NEO4J_URL: bolt://neo4j:7687
       NEO4J_USER: neo4j
-      NEO4J_PASSWORD: localpassword
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-localpassword}
     depends_on:
       redis:
         condition: service_healthy
       neo4j:
         condition: service_healthy
+    networks:
+      - tersecontext
 
   spec-generator:
     build: ./services/spec-generator
@@ -439,7 +516,7 @@ services:
       - "8097:8080"
     environment:
       REDIS_URL: redis://redis:6379
-      POSTGRES_DSN: postgres://tersecontext:localpassword@postgres:5432/tersecontext
+      POSTGRES_DSN: postgres://tersecontext:${POSTGRES_PASSWORD:-localpassword}@postgres:5432/tersecontext
       QDRANT_URL: http://qdrant:6333
       EMBEDDING_PROVIDER: ollama
       OLLAMA_URL: http://ollama:11434
@@ -462,6 +539,26 @@ services:
       timeout: 5s
       retries: 5
 
+  perf-tracker:
+    build: ./services/perf-tracker
+    ports:
+      - "8100:8080"
+    environment:
+      REDIS_URL: redis://redis:6379
+      POSTGRES_DSN: postgres://tersecontext:${POSTGRES_PASSWORD:-localpassword}@postgres:5432/tersecontext
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    networks:
+      - tersecontext
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   # One-shot init: waits for Neo4j to be healthy then applies constraints/indexes.
   # Exits 0 on success; docker-compose marks it as exited (not a failure).
   neo4j-init:
@@ -470,7 +567,7 @@ services:
       neo4j:
         condition: service_healthy
     entrypoint: >
-      bash -c "cypher-shell -u neo4j -p localpassword -a bolt://neo4j:7687
+      bash -c "cypher-shell -u neo4j -p $${NEO4J_PASSWORD:-localpassword} -a bolt://neo4j:7687
       < /startup/neo4j-init.cypher && echo 'neo4j-init: done'"
     volumes:
       - ./docker/neo4j-init.cypher:/startup/neo4j-init.cypher:ro

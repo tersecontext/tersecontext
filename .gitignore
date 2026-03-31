@@ -253,3 +253,4 @@ specs/output/
 
 # token budget test outputs
 context_docs/data/
+data/postgres/

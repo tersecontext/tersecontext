@@ -233,7 +233,8 @@ async def test_process_job_calls_instrumenter_and_emits():
 
     assert result == "ok"
     mock_client.instrument.assert_called_once_with(
-        stable_id="sha256:fn_test", file_path="tests/test.py", repo="test"
+        stable_id="sha256:fn_test", file_path="tests/test.py", repo="test",
+        capture_args=None, coverage_filter=None,
     )
     mock_client.run.assert_called_once_with(session_id="sess-uuid")
     assert len(emitted) == 1

@@ -9,6 +9,8 @@ from contextlib import asynccontextmanager
 
 import redis as redis_lib
 from fastapi import FastAPI
+
+logging.basicConfig(level=logging.INFO)
 from fastapi.responses import JSONResponse, PlainTextResponse
 
 from .classifier import classify_side_effects
@@ -51,7 +53,7 @@ def _get_neo4j_driver():
                 neo4j_url,
                 auth=(
                     os.environ.get("NEO4J_USER", "neo4j"),
-                    os.environ.get("NEO4J_PASSWORD", "localpassword"),
+                    os.environ["NEO4J_PASSWORD"],
                 ),
             )
         except Exception as exc:
@@ -92,6 +94,7 @@ def _process_message(r: redis_lib.Redis, driver, raw_json: str) -> None:
     ep = ExecutionPath(
         entrypoint_stable_id=trace.entrypoint_stable_id,
         commit_sha=trace.commit_sha,
+        repo=repo,
         call_sequence=nodes,
         side_effects=side_effects,
         dynamic_only_edges=dynamic_only,
@@ -178,7 +181,7 @@ def ready():
         _get_redis().ping()
         return {"status": "ok"}
     except Exception as exc:
-        return JSONResponse(status_code=503, content={"status": "unavailable", "error": str(exc)})
+        return JSONResponse(status_code=503, content={"status": "unavailable", "error": "redis unavailable"})
 
 
 @app.get("/metrics")

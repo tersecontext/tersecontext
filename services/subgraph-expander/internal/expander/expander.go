@@ -28,13 +28,14 @@ type EdgeCollector interface {
 // Expander orchestrates BFS traversal, scoring, pruning, and edge collection.
 type Expander struct {
 	fetcher   NeighborFetcher
+	hydrator  SeedHydrator
 	specs     SpecChecker
 	collector EdgeCollector
 }
 
 // New creates an Expander with the given dependencies.
-func New(fetcher NeighborFetcher, specs SpecChecker, collector EdgeCollector) *Expander {
-	return &Expander{fetcher: fetcher, specs: specs, collector: collector}
+func New(fetcher NeighborFetcher, hydrator SeedHydrator, specs SpecChecker, collector EdgeCollector) *Expander {
+	return &Expander{fetcher: fetcher, hydrator: hydrator, specs: specs, collector: collector}
 }
 
 // Expand performs BFS from seeds, prunes to budget, collects edges.
@@ -60,15 +61,31 @@ func (e *Expander) Expand(
 
 	// Convert proto seeds to BFSState at hop 0 with score 1.0.
 	seedIDs := make([]string, len(seeds))
-	bfsSeeds := make([]BFSState, len(seeds))
 	for i, s := range seeds {
 		seedIDs[i] = s.GetStableId()
-		bfsSeeds[i] = BFSState{
-			StableID: s.GetStableId(),
-			Name:     s.GetName(),
-			Type:     s.GetType(),
-			Score:    1.0,
-			Hop:      0,
+	}
+
+	// Hydrate seeds with full node data from Neo4j.
+	hydrated, err := e.hydrator.HydrateSeeds(ctx, seedIDs)
+	if err != nil {
+		slog.Warn("seed hydration failed, using sparse seed data", "error", err)
+		hydrated = map[string]BFSState{}
+	}
+
+	bfsSeeds := make([]BFSState, len(seeds))
+	for i, s := range seeds {
+		if h, ok := hydrated[s.GetStableId()]; ok {
+			bfsSeeds[i] = h
+			bfsSeeds[i].Score = 1.0
+			bfsSeeds[i].Hop = 0
+		} else {
+			bfsSeeds[i] = BFSState{
+				StableID: s.GetStableId(),
+				Name:     s.GetName(),
+				Type:     s.GetType(),
+				Score:    1.0,
+				Hop:      0,
+			}
 		}
 	}
 

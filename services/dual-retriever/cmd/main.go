@@ -33,7 +33,11 @@ func main() {
 	port := env("PORT", "8087")
 	neo4jURL := env("NEO4J_URL", "bolt://neo4j:7687")
 	neo4jUser := env("NEO4J_USER", "neo4j")
-	neo4jPassword := env("NEO4J_PASSWORD", "")
+	neo4jPassword := os.Getenv("NEO4J_PASSWORD")
+	if neo4jPassword == "" {
+		slog.Error("NEO4J_PASSWORD environment variable is required")
+		os.Exit(1)
+	}
 	qdrantURL := env("QDRANT_URL", "http://qdrant:6333")
 	embedderURL := env("EMBEDDER_URL", "http://embedder:8080")
 

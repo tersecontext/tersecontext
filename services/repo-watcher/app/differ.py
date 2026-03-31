@@ -8,6 +8,7 @@ from typing import Optional
 
 LANGUAGE_MAP = {
     ".py": "python",
+    ".go": "go",
     ".ts": "typescript",
     ".tsx": "typescript",
 }

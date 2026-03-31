@@ -8,5 +8,6 @@ RUN CGO_ENABLED=0 go build -o api-gateway ./cmd/main.go
 FROM alpine:3.19
 RUN apk add --no-cache ca-certificates
 COPY --from=builder /app/api-gateway /usr/local/bin/api-gateway
+COPY static/ /static/
 EXPOSE 8090
 CMD ["api-gateway"]

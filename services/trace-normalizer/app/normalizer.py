@@ -14,14 +14,49 @@ AGG_TTL = 86400 * 7  # 7 days
 def reconstruct_call_tree(events: list[TraceEvent]) -> list[CallNode]:
     """
     Walk the flat event list and reconstruct call/return pairs.
-    Returns one CallNode per call/return pair; frequency_ratio=1.0 by default.
+    Supports async events: if task_id is present, partitions events by task
+    and links sub-trees via async_call/async_return.
     """
-    stack: list[tuple[str, int, float]] = []  # (fn, depth, call_ts)
+    import logging as _logging
+    _log = _logging.getLogger(__name__)
+
+    has_task_ids = any(e.task_id is not None for e in events)
+
+    if not has_task_ids:
+        return _reconstruct_sync(events, _log)
+
+    # Partition events by task_id
+    tasks: dict[int, list[TraceEvent]] = {}
+    async_links: list[tuple[int, str]] = []  # (child_task_id, fn_name)
+
+    for ev in events:
+        tid = ev.task_id if ev.task_id is not None else 0
+        if ev.type == "async_call":
+            async_links.append((tid, ev.fn))
+            continue
+        if ev.type == "async_return":
+            continue
+        tasks.setdefault(tid, []).append(ev)
+
+    # Build call tree per task
+    task_trees: dict[int, list[CallNode]] = {}
+    for tid, task_events in tasks.items():
+        task_trees[tid] = _reconstruct_sync(task_events, _log)
+
+    # Flatten: root task first, then child tasks in order of async_call appearance
+    result = list(task_trees.get(0, []))
+    for child_tid, _fn in async_links:
+        result.extend(task_trees.get(child_tid, []))
+
+    return result
+
+
+def _reconstruct_sync(events: list[TraceEvent], _log) -> list[CallNode]:
+    """Original sync-only call tree reconstruction."""
+    stack: list[tuple[str, int, float]] = []
     nodes: list[CallNode] = []
     depth = 0
 
-    import logging as _logging
-    _log = _logging.getLogger(__name__)
     for ev in events:
         if ev.type == "call":
             stack.append((ev.fn, depth, ev.timestamp_ms))

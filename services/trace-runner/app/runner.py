@@ -8,6 +8,8 @@ import redis.asyncio as aioredis
 from pydantic import ValidationError
 
 from .cache import is_cached, mark_cached
+from .coverage import get_coverage_filter
+from .go_client import GoTraceClient
 from .instrumenter_client import InstrumenterClient
 from .models import EntrypointJob, RawTrace
 
@@ -26,17 +28,28 @@ async def process_job(
     r: aioredis.Redis,
     instrumenter: InstrumenterClient,
     emit_fn: Callable[[aioredis.Redis, RawTrace], Awaitable[None]] = _default_emit,
+    repo_dir: str | None = None,
+    capture_args: list[str] | None = None,
 ) -> str:
     """Process one EntrypointJob. Returns 'cached', 'ok', or 'error'."""
     if await is_cached(r, commit_sha, job.stable_id):
         logger.debug("Cache hit for %s @ %s", job.stable_id, commit_sha)
         return "cached"
 
+    coverage_filter = None
+    coverage_pct = None
+    if repo_dir:
+        coverage_filter, coverage_pct = await get_coverage_filter(
+            r, repo=job.repo, commit_sha=commit_sha, repo_dir=repo_dir,
+        )
+
     try:
         session_id = await instrumenter.instrument(
             stable_id=job.stable_id,
             file_path=job.file_path,
             repo=job.repo,
+            capture_args=capture_args,
+            coverage_filter=list(coverage_filter) if coverage_filter else None,
         )
         events, duration_ms = await instrumenter.run(session_id=session_id)
     except Exception as exc:
@@ -49,6 +62,7 @@ async def process_job(
         repo=job.repo,
         duration_ms=duration_ms,
         events=events,
+        coverage_pct=coverage_pct,
     )
     await emit_fn(r, trace)
     await mark_cached(r, commit_sha, job.stable_id)
@@ -60,10 +74,20 @@ async def run_worker(
     instrumenter_url: str,
     commit_sha: str,
     repos: list[str],
+    repo_dir: str | None = None,
+    capture_args: list[str] | None = None,
+    go_instrumenter_url: str | None = None,
+    go_trace_runner_url: str | None = None,
 ) -> None:
     """Main BLPOP worker loop. Runs until cancelled."""
     r = aioredis.from_url(redis_url)
     instrumenter = InstrumenterClient(base_url=instrumenter_url)
+    go_client: GoTraceClient | None = None
+    if go_instrumenter_url and go_trace_runner_url:
+        go_client = GoTraceClient(
+            instrumenter_url=go_instrumenter_url,
+            runner_url=go_trace_runner_url,
+        )
     _discovered_keys: list[str] = []
     _last_scan: float = 0.0
 
@@ -71,7 +95,10 @@ async def run_worker(
         logger.info("Worker started, watching repos=%s", repos)
         while True:
             try:
-                keys = [f"entrypoint_queue:{repo}" for repo in repos]
+                keys = []
+                for repo in repos:
+                    keys.append(f"entrypoint_queue:{repo}")
+                    keys.append(f"entrypoint_queue:{repo}:go")
                 if not keys:
                     # Re-scan Redis for entrypoint queues every 30 seconds
                     now = asyncio.get_event_loop().time()
@@ -102,18 +129,30 @@ async def run_worker(
                     continue
 
                 try:
-                    outcome = await asyncio.wait_for(
-                        process_job(
-                            job=job,
-                            commit_sha=commit_sha,
-                            r=r,
-                            instrumenter=instrumenter,
-                        ),
-                        timeout=30.0,
-                    )
-                    logger.info("Job %s: %s", job.stable_id, outcome)
+                    if job.language == "go" and go_client is not None:
+                        outcome = await asyncio.wait_for(
+                            go_client.process_job(
+                                job=job,
+                                commit_sha=commit_sha,
+                                r=r,
+                            ),
+                            timeout=120.0,
+                        )
+                    else:
+                        outcome = await asyncio.wait_for(
+                            process_job(
+                                job=job,
+                                commit_sha=commit_sha,
+                                r=r,
+                                instrumenter=instrumenter,
+                                repo_dir=repo_dir,
+                                capture_args=capture_args,
+                            ),
+                            timeout=30.0,
+                        )
+                    logger.info("Job %s [%s]: %s", job.stable_id, job.language, outcome)
                 except asyncio.TimeoutError:
-                    logger.error("Job timed out after 30s: %s", job.stable_id)
+                    logger.error("Job timed out: %s", job.stable_id)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -122,3 +161,5 @@ async def run_worker(
     finally:
         await r.aclose()
         await instrumenter.aclose()
+        if go_client is not None:
+            await go_client.aclose()

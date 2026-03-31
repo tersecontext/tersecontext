@@ -48,6 +48,13 @@ def _compute_branch_coverage(items: list[CallSequenceItem]) -> float | None:
     return observed / len(items)
 
 
+def _resolve_branch_coverage(path: ExecutionPath) -> float | None:
+    """Prefer pytest-derived coverage_pct, fall back to frequency-ratio."""
+    if path.coverage_pct is not None:
+        return path.coverage_pct
+    return _compute_branch_coverage(path.call_sequence)
+
+
 class SpecStore:
     def __init__(
         self,
@@ -95,7 +102,7 @@ class SpecStore:
         await loop.run_in_executor(None, self._ensure_collection_sync)
 
     async def upsert_spec(self, path: ExecutionPath, spec_text: str) -> None:
-        branch_coverage = _compute_branch_coverage(path.call_sequence)
+        branch_coverage = _resolve_branch_coverage(path)
         observed_calls = len(path.call_sequence)
         pool = await self._get_pool()
         async with pool.acquire() as conn:
