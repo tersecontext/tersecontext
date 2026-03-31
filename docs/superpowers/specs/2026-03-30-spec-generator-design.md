@@ -62,11 +62,24 @@ Pydantic models matching the updated `execution_path.json` contract:
 
 Pure function `render_spec_text(path: ExecutionPath, entrypoint_name: str) -> str`.
 
+`entrypoint_name` is always resolved by the caller (`_process` in `consumer.py`) before this function is invoked — see the consumer section for the single authoritative derivation.
+
 Renders three sections from the spec text format specified in CLAUDE.md:
 
-**PATH section** — lists each call_sequence item with its `name`, `frequency_ratio`, and `avg_ms`. Items with `frequency_ratio < 1.0` are labelled with branch counts derived from the ratio and the run count approximation from `timing_p50_ms` context. The entrypoint name comes from the first call_sequence item's `name` (hop 0), falling back to `entrypoint_stable_id`.
+**PATH section** — lists each call_sequence item with its `name`, `frequency_ratio`, and `avg_ms`. Items with `frequency_ratio < 1.0` are labelled with branch counts derived from the ratio and the run count approximation from `timing_p50_ms` context.
 
-**SIDE_EFFECTS section** — maps each side effect's `type` enum to its display prefix (`DB READ`, `DB WRITE`, `CACHE SET`, `HTTP OUT`, `ENV READ`, `FS WRITE`) and appends `detail`. Conditional side effects (hop_depth > 1) are annotated with `(conditional)`.
+**SIDE_EFFECTS section** — maps each side effect's `type` enum to its display prefix and appends `detail`. Conditional side effects (hop_depth > 1) are annotated with `(conditional)`. The mapping (exhaustive, matching the contract enum exactly):
+
+| Contract enum  | Display prefix |
+|----------------|----------------|
+| `db_read`      | `DB READ`      |
+| `db_write`     | `DB WRITE`     |
+| `cache_read`   | `CACHE READ`   |
+| `cache_set`    | `CACHE SET`    |
+| `http_out`     | `HTTP OUT`     |
+| `fs_write`     | `FS WRITE`     |
+
+Unknown types fall through to their raw value uppercased. There is no `ENV READ` display label — `env_read` is not in the contract enum.
 
 **CHANGE_IMPACT section** — derived from side effects: unique tables from DB reads/writes, unique external services from HTTP out.
 
@@ -80,7 +93,8 @@ No I/O. Fully testable without any mocks.
 
 Executes an `INSERT ... ON CONFLICT (node_stable_id, repo, commit_sha) DO UPDATE` that increments `version` and overwrites `spec_text`, `branch_coverage`, `observed_calls`, `generated_at`. Uses `asyncpg` directly (no ORM).
 
-`branch_coverage` is computed as the fraction of `call_sequence` items with `frequency_ratio == 1.0`.
+`branch_coverage` is computed as the fraction of `call_sequence` items with `frequency_ratio > 0.0` — i.e., the fraction of call sites observed at least once across all trace runs. This is a defensible lower-bound estimate: if a branch was never taken in any run, it contributes 0; if it was taken at least once (even rarely), it contributes 1. A value of 1.0 means every static call site was observed at runtime at least once.
+
 `observed_calls` is `len(call_sequence)`.
 
 **`upsert_qdrant(path, spec_text) -> None`**
@@ -90,6 +104,8 @@ Embeds `spec_text` using the configured embedding provider (same Ollama/Voyage a
 - `id`: `uuid5(NAMESPACE_OID, f"{path.entrypoint_stable_id}:{path.repo}")` — stable across reruns
 - `vector`: embedding of `spec_text`
 - `payload`: `{node_stable_id, entrypoint_name, repo, commit_sha}`
+
+The `upsert_qdrant` signature is `upsert_qdrant(path, entrypoint_name: str, spec_text) -> None`. `entrypoint_name` is passed in by the caller — it is not re-derived internally.
 
 Creates the `specs` collection on startup if it does not exist (same pattern as vector-writer).
 
@@ -101,7 +117,7 @@ Redis consumer group `spec-generator-group` on `stream:execution-paths`. Follows
 
 - `xgroup_create` with `BUSYGROUP` suppression on startup
 - `xreadgroup` with `block=1000`, `count=10`
-- Per-message: parse → render → `upsert_spec` → `upsert_qdrant` → `xack`
+- Per-message: parse → derive `entrypoint_name` (`path.call_sequence[0].name if path.call_sequence else path.entrypoint_stable_id`) → render → `upsert_spec` → `upsert_qdrant(path, entrypoint_name, spec_text)` → `xack`
 - Malformed messages (`ValidationError`, `KeyError`, `json.JSONDecodeError`): log warning, XACK (discard)
 - Transient failures (Postgres/Qdrant unreachable): log error, do NOT XACK (retry on next poll)
 
@@ -157,13 +173,17 @@ Reuses the same provider abstraction (`providers/base.py`, `providers/ollama.py`
 - `upsert_spec` issues correct INSERT with ON CONFLICT clause
 - `upsert_qdrant` calls provider.embed once, calls client.upsert with correct payload shape
 - `ensure_collection` skips creation if collection already exists (409 suppressed)
-- `branch_coverage` computed correctly (all-1.0 → 1.0, mixed → fraction)
+- `branch_coverage` = 1.0 when all items have `frequency_ratio > 0.0`
+- `branch_coverage` = 0.0 when all items have `frequency_ratio == 0.0`
+- `branch_coverage` = fraction when mixed (e.g. 2 of 4 items > 0.0 → 0.5)
 
 **`test_consumer.py`** — unit tests for `_process`:
 - Valid message → render called, upsert_spec called, upsert_qdrant called
+- Empty `call_sequence` → `entrypoint_name` falls back to `entrypoint_stable_id`, render and upserts still called
 - `ValidationError` → XACK, no store calls
 - Missing `event` key → XACK, no store calls
 - Postgres failure → exception propagates (caller does NOT XACK)
+- Same message processed twice → `upsert_spec` called twice with same `(node_stable_id, repo, commit_sha)` (version increment is Postgres's responsibility; consumer must not short-circuit on duplicate)
 
 ---
 
@@ -201,7 +221,7 @@ spec-generator:
 
 - [ ] `GET /health` returns 200
 - [ ] Consumer reads from `stream:execution-paths` (consumer group: `spec-generator-group`)
-- [ ] `behavior_specs` table created on startup if not exists
+- [ ] `ensure_schema()` runs on startup; `behavior_specs` table and index created if not exists
 - [ ] `specs` Qdrant collection created on startup if not exists
 - [ ] Valid ExecutionPath → spec_text rendered → row upserted to Postgres → vector upserted to Qdrant
 - [ ] Re-run at same `(node_stable_id, repo, commit_sha)` increments `version`
