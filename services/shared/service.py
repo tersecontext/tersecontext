@@ -40,11 +40,11 @@ class ServiceBase:
 
         self.router = APIRouter()
 
-        @self.router.get("/health")
+        @self.router.get("/health", name=f"{name}-health")
         def health() -> dict[str, str]:
             return {"status": "ok", "service": name, "version": version}
 
-        @self.router.get("/ready")
+        @self.router.get("/ready", name=f"{name}-ready")
         async def ready() -> Any:
             errors: list[str] = []
             for checker in self._dep_checkers:
@@ -62,11 +62,11 @@ class ServiceBase:
         """Register a dep checker. Return None if OK, an error string if not."""
         self._dep_checkers.append(checker)
 
-    def get_redis(self, url: str | None = None) -> aioredis.Redis:
-        """Return the singleton Redis client, creating it on first call."""
+    def get_redis(self) -> aioredis.Redis:
+        """Return the singleton Redis client, creating it on first call using REDIS_URL."""
         if self._redis is None:
             self._redis = aioredis.from_url(
-                url or os.environ.get("REDIS_URL", "redis://localhost:6379")
+                os.environ.get("REDIS_URL", "redis://localhost:6379")
             )
         return self._redis
 
