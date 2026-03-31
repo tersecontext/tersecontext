@@ -226,6 +226,8 @@ Verifiable DoD criterion: `SideEffect` entries with `hop_depth > 1` render as `(
 
 `confidence_band` (HIGH/MEDIUM/LOW) and `coverage_pct` (float) are added to the Qdrant upsert payload for retrieval scoring.
 
+**Computation ownership:** The renderer (`renderer.py`) computes `confidence_band` from `ExecutionPath.coverage_pct` (already a float field on the model) using the HIGH/MEDIUM/LOW thresholds above. The renderer returns both the `spec_text` string and the `confidence_band` value. The consumer passes both to `store.py`, which includes them in the Qdrant upsert payload. `coverage_pct` is passed through directly from `ExecutionPath`.
+
 ---
 
 ## Section 4 — Performance Optimizations
