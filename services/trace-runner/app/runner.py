@@ -2,7 +2,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 from typing import Callable, Awaitable
 
 import redis.asyncio as aioredis
@@ -72,8 +71,13 @@ async def run_worker(
             try:
                 keys = [f"entrypoint_queue:{repo}" for repo in repos]
                 if not keys:
-                    await asyncio.sleep(5)
-                    continue
+                    # Auto-discover repos by scanning Redis for entrypoint queues
+                    async for key in r.scan_iter("entrypoint_queue:*"):
+                        key_str = key.decode("utf-8") if isinstance(key, bytes) else key
+                        keys.append(key_str)
+                    if not keys:
+                        await asyncio.sleep(5)
+                        continue
 
                 result = await r.blpop(keys, timeout=5)
                 if result is None:
@@ -89,7 +93,7 @@ async def run_worker(
                     continue
 
                 try:
-                    await asyncio.wait_for(
+                    outcome = await asyncio.wait_for(
                         process_job(
                             job=job,
                             commit_sha=commit_sha,
@@ -98,6 +102,7 @@ async def run_worker(
                         ),
                         timeout=30.0,
                     )
+                    logger.info("Job %s: %s", job.stable_id, outcome)
                 except asyncio.TimeoutError:
                     logger.error("Job timed out after 30s: %s", job.stable_id)
             except asyncio.CancelledError:
