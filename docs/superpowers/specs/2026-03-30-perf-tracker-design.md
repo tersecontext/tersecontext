@@ -30,8 +30,53 @@ services/perf-tracker/
 └── pytest.ini
 ```
 
-Port: 8098
+Port: 8098 (external docker-compose mapping; internal container port is 8080, matching all other services)
 Standard endpoints: `GET /health`, `GET /ready`, `GET /metrics`
+
+---
+
+## Configuration
+
+Environment variables (with defaults):
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `REDIS_URL` | `redis://localhost:6379` | Redis connection URL |
+| `POSTGRES_DSN` | *(required)* | Postgres connection string |
+| `REALTIME_INTERVAL_S` | `5` | Real-time snapshot frequency (seconds) |
+| `HISTORY_INTERVAL_S` | `60` | Postgres batch insert frequency (seconds) |
+| `LAG_THRESHOLD_S` | `10` | Processing lag threshold before flagging bottleneck |
+| `REGRESSION_THRESHOLD_PCT` | `20` | Duration increase % to flag a regression |
+| `THROUGHPUT_DROP_PCT` | `50` | Throughput drop % vs rolling average to flag |
+| `MAX_CALL_DEPTH` | `15` | Call depth threshold for deep-chain detection |
+
+---
+
+## Docker Compose
+
+```yaml
+perf-tracker:
+  build:
+    context: .
+    dockerfile: docker/python.Dockerfile
+    args:
+      SERVICE: perf-tracker
+  ports:
+    - "8098:8080"
+  environment:
+    REDIS_URL: redis://redis:6379
+    POSTGRES_DSN: postgresql://tersecontext:${POSTGRES_PASSWORD:-localpassword}@postgres:5432/tersecontext
+  depends_on:
+    redis:
+      condition: service_healthy
+    postgres:
+      condition: service_healthy
+  healthcheck:
+    test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+    interval: 10s
+    timeout: 5s
+    retries: 3
+```
 
 ---
 
@@ -41,13 +86,19 @@ The collector consumes both existing streams using new consumer groups, running 
 
 ### Stream Consumption
 
+Uses `redis.asyncio` (matching the `spec-generator` pattern). A single `XREADGROUP` call reads both streams simultaneously, blocking until data arrives on either.
+
 - `stream:raw-traces` via consumer group `perf-tracker-traces` — extracts per-function timing, entrypoint duration, event counts
 - `stream:execution-paths` via consumer group `perf-tracker-paths` — extracts branch coverage, side effect counts, call depth
+
+**Field availability:** Both RawTrace and ExecutionPath payloads include `repo`. If `repo` is missing from a message, extract it from the `entrypoint_stable_id` (which encodes `repo:file_path:...`) or skip the message with a warning log. Correlation keys for processing lag always include `(repo, entrypoint_stable_id)` to avoid cross-repo confusion.
+
+**Malformed messages:** ACK and log a warning (matching `spec-generator` pattern). Do not block the consumer on bad data.
 
 ### Pipeline Metrics (extracted from stream data)
 
 - **Throughput:** messages per second on each stream (measured by arrival rate)
-- **Processing lag:** time between a RawTrace being emitted and its corresponding ExecutionPath appearing (correlate by `entrypoint_stable_id`)
+- **Processing lag:** time between a RawTrace being emitted and its corresponding ExecutionPath appearing. Computed using Redis stream message IDs (which encode millisecond timestamps), correlated by `(repo, entrypoint_stable_id)`
 - **Queue depth:** periodic `XLEN` on both streams + `LLEN` on `entrypoint_queue:*`
 
 ### User-Code Metrics (extracted from trace data)
@@ -116,7 +167,7 @@ Runs on-demand (called by API endpoints) and on a schedule (after each collector
 ### User-Code Bottleneck Detection
 
 - **Slow functions:** top N functions by `avg_duration_ms` from `perf_metrics`
-- **Regression detection:** compare current commit's function durations to previous commit — flag functions where duration increased by more than 20%
+- **Regression detection:** requires explicit `base_sha` and `head_sha` (supplied by caller or API query params). Compares avg function durations between the two commits — flags functions where duration increased by more than the configured threshold (default 20%)
 - **Hot paths:** functions with highest call frequency x duration product (cumulative time)
 - **Deep call chains:** entrypoints with call depth exceeding a threshold (default 15)
 
@@ -165,7 +216,7 @@ All mounted under `/api/v1` prefix.
 
 ### Trigger
 
-- `POST /api/v1/analyze/{repo}` — run analysis on-demand, returns 202 Accepted with results location
+- `POST /api/v1/analyze/{repo}` — run analysis synchronously, returns 200 with full analysis results (bottlenecks, slow functions, pipeline health). For repos with large history this may take a few seconds, but avoids the complexity of async polling for the MVP
 
 ---
 
@@ -198,6 +249,7 @@ Thin Python script at `services/perf-tracker/cli.py` that hits the API and forma
 
 ### Unit Tests
 
+- `conftest.py` — shared fixtures for mock store, mock Redis, sample RawTrace/ExecutionPath data
 - `test_collector.py` — mock Redis streams, verify metric extraction from RawTrace and ExecutionPath messages
 - `test_analyzer.py` — feed known metrics, verify bottleneck detection logic (queue buildup, regression detection, trend slope)
 - `test_store.py` — mock Postgres/Redis, verify writes and reads
@@ -207,6 +259,10 @@ Thin Python script at `services/perf-tracker/cli.py` that hits the API and forma
 ### Pattern
 
 Same as existing services: `unittest.mock.patch` for external dependencies, `TestClient` for endpoints, `pytest-asyncio` for async tests.
+
+### CLI
+
+`cli.py` is a standalone script with no imports from `app/`. Only dependency beyond stdlib is `httpx`.
 
 ---
 
