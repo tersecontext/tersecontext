@@ -7,6 +7,7 @@ import redis
 import redis.exceptions
 
 from .extractor import apply_diff_filter, extract
+from .extractor_go import extract_go
 from .models import FileChangedEvent, ParsedFileEvent
 from .parser import parse
 
@@ -42,12 +43,13 @@ def _process(r: redis.Redis, data: dict) -> None:
             deleted_nodes=event.deleted_nodes,
         )
     else:
-        file_path = os.path.join(repo_root, event.path)
+        file_path = os.path.join(repo_root, event.repo, event.path)
         with open(file_path, "rb") as fh:
             source_bytes = fh.read()
 
         root = parse(source_bytes, event.language)
-        all_nodes, all_edges = extract(root, source_bytes, event.repo, event.path)
+        extractor = extract_go if event.language == "go" else extract
+        all_nodes, all_edges = extractor(root, source_bytes, event.repo, event.path)
         filtered_nodes, filtered_edges = apply_diff_filter(all_nodes, all_edges, event)
 
         out = ParsedFileEvent(

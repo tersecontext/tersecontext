@@ -1,8 +1,10 @@
+import tree_sitter_go as tsgo
 import tree_sitter_python as tspython
 from tree_sitter import Language, Parser, Node
 
 PARSERS: dict[str, Language] = {
     "python": Language(tspython.language()),
+    "go": Language(tsgo.language()),
 }
 
 
