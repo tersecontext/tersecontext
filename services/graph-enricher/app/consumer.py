@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
 import socket
@@ -42,7 +41,7 @@ async def run_consumer(driver) -> None:
                     count=10,
                     block=1000,
                 )
-                batch_processed = False
+                any_event_written = False
                 for _stream, events in (messages or []):
                     for msg_id, data in events:
                         try:
@@ -53,9 +52,9 @@ async def run_consumer(driver) -> None:
                                 raw = raw.decode("utf-8")
                             event = ExecutionPath.model_validate_json(raw)
                             await loop.run_in_executor(None, _process_event, driver, event)
-                            batch_processed = True
+                            any_event_written = True
                             await r.xack(STREAM, GROUP, msg_id)
-                        except (json.JSONDecodeError, ValidationError, KeyError) as exc:
+                        except (ValidationError, KeyError) as exc:
                             logger.warning("Bad message %s, skipping: %s", msg_id, exc)
                             await r.xack(STREAM, GROUP, msg_id)
                         except asyncio.CancelledError:
@@ -63,7 +62,7 @@ async def run_consumer(driver) -> None:
                         except Exception as exc:
                             logger.error("Consumer failed msg=%s: %s", msg_id, exc)
 
-                if batch_processed:
+                if any_event_written:
                     try:
                         await loop.run_in_executor(None, enricher.run_conflict_detector, driver)
                         await loop.run_in_executor(None, enricher.run_staleness_downgrade, driver)
