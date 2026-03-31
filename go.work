@@ -7,4 +7,5 @@ use (
 	./services/dual-retriever
 	./services/serializer
 	./services/subgraph-expander
+	./services/tracert
 )
