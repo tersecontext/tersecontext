@@ -1,5 +1,5 @@
 import uuid
-from unittest.mock import AsyncMock, MagicMock, patch, call
+from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from app.models import CallSequenceItem, ExecutionPath
@@ -50,6 +50,13 @@ async def test_upsert_spec_executes_insert_on_conflict():
     assert "ON CONFLICT" in sql
     assert "behavior_specs" in sql
     assert "version" in sql
+    # Verify positional args: node_stable_id, repo, commit_sha, spec_text, branch_coverage, observed_calls
+    assert args[0] == "sha256:fn_login"
+    assert args[1] == "acme"
+    assert args[2] == "abc123"
+    assert args[3] == "some spec text"
+    assert args[4] == 1.0  # branch_coverage: 1 item with freq 1.0 → 100%
+    assert args[5] == 1    # observed_calls: 1 item in call_sequence
 
 
 async def test_upsert_spec_branch_coverage_all_observed():

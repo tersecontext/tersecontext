@@ -61,16 +61,20 @@ class SpecStore:
         self._embedding_dim = embedding_dim
         self._qdrant = QdrantClient(url=qdrant_url)
         self._pool: asyncpg.Pool | None = None
+        self._pool_lock = asyncio.Lock()
 
     async def _get_pool(self) -> asyncpg.Pool:
         if self._pool is None:
-            self._pool = await asyncpg.create_pool(self._postgres_dsn)
+            async with self._pool_lock:
+                if self._pool is None:
+                    self._pool = await asyncpg.create_pool(self._postgres_dsn)
         return self._pool
 
     async def ensure_schema(self) -> None:
         pool = await self._get_pool()
         async with pool.acquire() as conn:
-            await conn.execute(SCHEMA_SQL)
+            async with conn.transaction():
+                await conn.execute(SCHEMA_SQL)
 
     def _ensure_collection_sync(self) -> None:
         existing = {c.name for c in self._qdrant.get_collections().collections}
@@ -138,3 +142,4 @@ class SpecStore:
     async def close(self) -> None:
         if self._pool:
             await self._pool.close()
+            self._pool = None
