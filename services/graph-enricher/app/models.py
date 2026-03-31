@@ -1,13 +1,9 @@
+# services/graph-enricher/app/models.py
 from __future__ import annotations
-
-from typing import Literal
-
 from pydantic import BaseModel, ConfigDict
 
 
 class CallNode(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
     stable_id: str
     hop: int
     frequency_ratio: float
@@ -15,22 +11,18 @@ class CallNode(BaseModel):
 
 
 class SideEffect(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    type: Literal["db_read", "db_write", "cache_read", "cache_set", "http_out", "fs_write"]
+    type: str
     detail: str
     hop_depth: int
 
 
 class DynamicEdge(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
     source: str
     target: str
 
 
 class ExecutionPath(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
 
     entrypoint_stable_id: str
     commit_sha: str
