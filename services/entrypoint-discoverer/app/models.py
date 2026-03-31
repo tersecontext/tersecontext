@@ -10,6 +10,14 @@ class EntrypointJob(BaseModel):
     file_path: str
     priority: int
     repo: str
+    language: str = "python"
+
+
+def detect_language(file_path: str) -> str:
+    """Detect language from file extension."""
+    if file_path.endswith(".go"):
+        return "go"
+    return "python"
 
 
 class DiscoverRequest(BaseModel):

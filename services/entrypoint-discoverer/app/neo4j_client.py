@@ -7,6 +7,9 @@ WHERE n.name STARTS WITH 'test_'
    OR n.decorators CONTAINS 'app.route'
    OR n.decorators CONTAINS 'router.'
    OR n.decorators CONTAINS 'click.command'
+   OR (n.type = 'function' AND n.name STARTS WITH 'Test')
+   OR (n.type = 'method' AND n.name = 'ServeHTTP')
+   OR (n.type = 'function' AND n.name = 'main')
 RETURN n.stable_id AS stable_id, n.name AS name, n.file_path AS file_path
 """
 

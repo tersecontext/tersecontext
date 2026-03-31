@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Optional
+from typing import Any, Optional
 from pydantic import BaseModel
 
 
@@ -9,6 +9,7 @@ class EntrypointJob(BaseModel):
     file_path: str
     priority: int
     repo: str
+    language: str = "python"
 
 
 class TraceEvent(BaseModel):
@@ -19,8 +20,10 @@ class TraceEvent(BaseModel):
     timestamp_ms: float
     exc_type: Optional[str] = None
     task_id: Optional[int] = None
-    args: Optional[str] = None
-    return_val: Optional[str] = None
+    goroutine_id: Optional[int] = None
+    span_id: Optional[int] = None
+    args: Optional[Any] = None
+    return_val: Optional[Any] = None
 
 
 class RawTrace(BaseModel):

@@ -439,6 +439,54 @@ services:
       timeout: 5s
       retries: 5
 
+  go-instrumenter:
+    build: ./services/go-instrumenter
+    ports:
+      - "8098:8098"
+    volumes:
+      - ~/workspaces:/repos:ro
+      - /tmp/go-trace-sessions:/tmp/sessions
+      - ./services/tracert:/app/tracert:ro
+    environment:
+      PORT: "8098"
+      SESSIONS_DIR: /tmp/sessions
+      TRACERT_PATH: /app/tracert
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - tersecontext
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8098/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  go-trace-runner:
+    build: ./services/go-trace-runner
+    ports:
+      - "8099:8099"
+    volumes:
+      - /tmp/go-trace-sessions:/tmp/sessions
+    environment:
+      PORT: "8099"
+      SESSIONS_DIR: /tmp/sessions
+      REDIS_URL: redis://redis:6379
+      INSTRUMENTER_URL: http://go-instrumenter:8098
+    depends_on:
+      redis:
+        condition: service_healthy
+      go-instrumenter:
+        condition: service_healthy
+    networks:
+      - tersecontext
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8099/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   trace-normalizer:
     build: ./services/trace-normalizer
     ports:
