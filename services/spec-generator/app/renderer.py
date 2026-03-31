@@ -65,7 +65,10 @@ def render_spec_text(path: ExecutionPath, entrypoint_name: str) -> str:
     for i, item in enumerate(path.call_sequence, start=1):
         freq_str = f"{item.frequency_ratio:.2f}"
         ms_str = f"~{item.avg_ms:.1f}ms"
-        lines.append(f"  {i}.  {item.name}    {freq_str}    {ms_str}")
+        line = f"  {i}.  {item.name}    {freq_str}    {ms_str}"
+        if item.args:
+            line += f"    args: {item.args}"
+        lines.append(line)
     lines.append("")
 
     # SIDE_EFFECTS section

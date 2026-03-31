@@ -18,6 +18,9 @@ class TraceEvent(BaseModel):
     line: int
     timestamp_ms: float
     exc_type: Optional[str] = None
+    task_id: Optional[int] = None
+    args: Optional[str] = None
+    return_val: Optional[str] = None
 
 
 class RawTrace(BaseModel):
@@ -26,3 +29,4 @@ class RawTrace(BaseModel):
     repo: str
     duration_ms: float
     events: list[TraceEvent]
+    coverage_pct: Optional[float] = None

@@ -8,6 +8,7 @@ import redis.asyncio as aioredis
 from pydantic import ValidationError
 
 from .cache import is_cached, mark_cached
+from .coverage import get_coverage_filter
 from .instrumenter_client import InstrumenterClient
 from .models import EntrypointJob, RawTrace
 
@@ -26,17 +27,28 @@ async def process_job(
     r: aioredis.Redis,
     instrumenter: InstrumenterClient,
     emit_fn: Callable[[aioredis.Redis, RawTrace], Awaitable[None]] = _default_emit,
+    repo_dir: str | None = None,
+    capture_args: list[str] | None = None,
 ) -> str:
     """Process one EntrypointJob. Returns 'cached', 'ok', or 'error'."""
     if await is_cached(r, commit_sha, job.stable_id):
         logger.debug("Cache hit for %s @ %s", job.stable_id, commit_sha)
         return "cached"
 
+    coverage_filter = None
+    coverage_pct = None
+    if repo_dir:
+        coverage_filter, coverage_pct = await get_coverage_filter(
+            r, repo=job.repo, commit_sha=commit_sha, repo_dir=repo_dir,
+        )
+
     try:
         session_id = await instrumenter.instrument(
             stable_id=job.stable_id,
             file_path=job.file_path,
             repo=job.repo,
+            capture_args=capture_args,
+            coverage_filter=list(coverage_filter) if coverage_filter else None,
         )
         events, duration_ms = await instrumenter.run(session_id=session_id)
     except Exception as exc:
@@ -49,6 +61,7 @@ async def process_job(
         repo=job.repo,
         duration_ms=duration_ms,
         events=events,
+        coverage_pct=coverage_pct,
     )
     await emit_fn(r, trace)
     await mark_cached(r, commit_sha, job.stable_id)
@@ -60,6 +73,8 @@ async def run_worker(
     instrumenter_url: str,
     commit_sha: str,
     repos: list[str],
+    repo_dir: str | None = None,
+    capture_args: list[str] | None = None,
 ) -> None:
     """Main BLPOP worker loop. Runs until cancelled."""
     r = aioredis.from_url(redis_url)
@@ -108,6 +123,8 @@ async def run_worker(
                             commit_sha=commit_sha,
                             r=r,
                             instrumenter=instrumenter,
+                            repo_dir=repo_dir,
+                            capture_args=capture_args,
                         ),
                         timeout=30.0,
                     )
