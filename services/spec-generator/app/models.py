@@ -10,6 +10,7 @@ class CallSequenceItem(BaseModel):
     hop: int
     frequency_ratio: float
     avg_ms: float
+    args: Optional[str] = None
 
 
 class SideEffect(BaseModel):
