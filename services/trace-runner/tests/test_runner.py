@@ -278,3 +278,46 @@ async def test_process_job_returns_error_on_instrumenter_failure():
     assert emitted == []
     # cache was NOT marked on failure
     mock_r.set.assert_not_called()
+
+
+# ── App endpoints ─────────────────────────────────────────────────────────────
+
+import app.main as main_module
+from app.main import app as fastapi_app
+
+
+@pytest.fixture(autouse=True)
+def reset_redis_client():
+    """Reset module-level redis singleton between tests to avoid state leakage."""
+    original = main_module._redis_client
+    yield
+    main_module._redis_client = original
+
+
+def test_health_returns_200():
+    from fastapi.testclient import TestClient
+    client = TestClient(fastapi_app)
+    resp = client.get("/health")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "ok"
+    assert data["service"] == "trace-runner"
+
+
+def test_ready_returns_503_when_redis_down():
+    from unittest.mock import MagicMock
+    from fastapi.testclient import TestClient
+    mock_redis = MagicMock()
+    mock_redis.ping.side_effect = Exception("connection refused")
+    main_module._redis_client = mock_redis
+    client = TestClient(fastapi_app)
+    resp = client.get("/ready")
+    assert resp.status_code == 503
+
+
+def test_metrics_returns_prometheus_text():
+    from fastapi.testclient import TestClient
+    client = TestClient(fastapi_app)
+    resp = client.get("/metrics")
+    assert resp.status_code == 200
+    assert "trace_runner_jobs_processed_total" in resp.text
