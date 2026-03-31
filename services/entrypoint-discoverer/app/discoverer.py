@@ -11,6 +11,9 @@ def run_discover(neo4j_driver, pg_conn, redis_client, repo: str, trigger: str) -
     """
     Orchestrate the full entrypoint discovery flow.
 
+    trigger: "schedule" or "pr_open" — accepted for future prioritisation but not
+    currently used to alter scoring or queuing behaviour.
+
     Returns {"discovered": N, "queued": M}.
     """
     entrypoints = query_entrypoints(neo4j_driver, repo)
