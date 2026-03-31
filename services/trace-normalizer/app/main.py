@@ -51,7 +51,7 @@ def _get_neo4j_driver():
                 neo4j_url,
                 auth=(
                     os.environ.get("NEO4J_USER", "neo4j"),
-                    os.environ.get("NEO4J_PASSWORD", "localpassword"),
+                    os.environ["NEO4J_PASSWORD"],
                 ),
             )
         except Exception as exc:
@@ -178,7 +178,7 @@ def ready():
         _get_redis().ping()
         return {"status": "ok"}
     except Exception as exc:
-        return JSONResponse(status_code=503, content={"status": "unavailable", "error": str(exc)})
+        return JSONResponse(status_code=503, content={"status": "unavailable", "error": "redis unavailable"})
 
 
 @app.get("/metrics")

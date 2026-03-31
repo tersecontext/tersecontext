@@ -28,7 +28,7 @@ def _get_neo4j_driver():
     if _neo4j_driver is None:
         uri = os.environ.get("NEO4J_URL", "bolt://localhost:7687")
         user = os.environ.get("NEO4J_USER", "neo4j")
-        password = os.environ.get("NEO4J_PASSWORD", "localpassword")
+        password = os.environ["NEO4J_PASSWORD"]
         _neo4j_driver = GraphDatabase.driver(uri, auth=(user, password))
     return _neo4j_driver
 
@@ -36,10 +36,7 @@ def _get_neo4j_driver():
 def _get_pg_conn():
     global _pg_conn
     if _pg_conn is None or _pg_conn.closed:
-        dsn = os.environ.get(
-            "POSTGRES_DSN",
-            "postgres://tersecontext:localpassword@localhost:5432/tersecontext",
-        )
+        dsn = os.environ["POSTGRES_DSN"]
         _pg_conn = psycopg2.connect(dsn)
     return _pg_conn
 
@@ -66,7 +63,7 @@ def ready():
         _get_redis().ping()
         return {"status": "ok"}
     except Exception as exc:
-        return JSONResponse(status_code=503, content={"status": "unavailable", "error": str(exc)})
+        return JSONResponse(status_code=503, content={"status": "unavailable", "error": "redis unavailable"})
 
 
 @app.get("/metrics")
@@ -92,4 +89,4 @@ def discover(req: DiscoverRequest):
         return DiscoverResponse(**result)
     except Exception as exc:
         logger.error("Discover failed: %s", exc)
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail="Discovery failed")

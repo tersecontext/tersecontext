@@ -51,7 +51,7 @@ async def lifespan(app: FastAPI):
     from app.consumer import run_consumer
 
     provider = _make_provider()
-    postgres_dsn = os.environ.get("POSTGRES_DSN", "postgres://tersecontext:localpassword@localhost:5432/tersecontext")
+    postgres_dsn = os.environ["POSTGRES_DSN"]
     qdrant_url = os.environ.get("QDRANT_URL", "http://localhost:6333")
     embedding_dim = _get_embedding_dim()
 
