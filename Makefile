@@ -1,4 +1,4 @@
-.PHONY: up down proto verify logs
+.PHONY: up down proto verify logs ps demo-up demo
 
 # ── Infrastructure ─────────────────────────────────────────────────────────────
 
@@ -59,3 +59,12 @@ verify:
 
 ps:
 	docker compose ps
+
+# ── Demo ────────────────────────────────────────────────────────────────────────
+
+demo-up:
+	mkdir -p data/neo4j data/qdrant data/redis data/postgres data/ollama
+	docker compose -f docker-compose.yml -f docker-compose.demo.yml up -d
+
+demo: demo-up
+	@bash scripts/demo.sh
