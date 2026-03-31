@@ -10,7 +10,7 @@ def _make_path(call_sequence=None, side_effects=None):
         side_effects=side_effects or [],
         dynamic_only_edges=[],
         never_observed_static_edges=[],
-        timing_p50_ms=1.0,  # round(1.0) = 1 → _runs_observed returns 1
+        timing_p50_ms=1.0,
         timing_p99_ms=4.0,
     )
 
@@ -36,8 +36,8 @@ def test_path_section_header():
     from app.renderer import render_spec_text
     path = _make_path(call_sequence=[_item("login", hop=0, avg_ms=12.5)])
     text = render_spec_text(path, "login")
-    assert text.startswith("PATH login")
-    assert "(1 runs observed)" in text
+    first_line = text.splitlines()[0]
+    assert first_line == "PATH login"
 
 
 def test_path_section_lists_items_in_hop_order():

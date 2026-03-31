@@ -8,6 +8,8 @@ import redis.asyncio as aioredis
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse, PlainTextResponse
 
+from . import consumer as _consumer
+
 logger = logging.getLogger(__name__)
 
 VERSION = "0.1.0"
@@ -107,15 +109,15 @@ def metrics():
     lines = [
         "# HELP spec_generator_messages_processed_total Total messages processed",
         "# TYPE spec_generator_messages_processed_total counter",
-        "spec_generator_messages_processed_total 0",
+        f"spec_generator_messages_processed_total {_consumer.messages_processed_total}",
         "# HELP spec_generator_messages_failed_total Total messages failed",
         "# TYPE spec_generator_messages_failed_total counter",
-        "spec_generator_messages_failed_total 0",
+        f"spec_generator_messages_failed_total {_consumer.messages_failed_total}",
         "# HELP spec_generator_specs_written_total Total specs written to Postgres",
         "# TYPE spec_generator_specs_written_total counter",
-        "spec_generator_specs_written_total 0",
+        f"spec_generator_specs_written_total {_consumer.specs_written_total}",
         "# HELP spec_generator_specs_embedded_total Total specs embedded to Qdrant",
         "# TYPE spec_generator_specs_embedded_total counter",
-        "spec_generator_specs_embedded_total 0",
+        f"spec_generator_specs_embedded_total {_consumer.specs_embedded_total}",
     ]
     return PlainTextResponse("\n".join(lines) + "\n")

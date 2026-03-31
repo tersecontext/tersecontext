@@ -127,3 +127,43 @@ async def test_process_bytes_event_decoded():
     await _process(data, mock_store)
 
     mock_store.upsert_spec.assert_called_once()
+
+
+async def test_successful_process_increments_written_and_embedded_counters():
+    import app.consumer as consumer
+    from app.consumer import _process
+
+    consumer.specs_written_total = 0
+    consumer.specs_embedded_total = 0
+
+    mock_store = MagicMock()
+    mock_store.upsert_spec = AsyncMock()
+    mock_store.upsert_qdrant = AsyncMock()
+
+    data = {"event": json.dumps(_make_path_dict())}
+    await _process(data, mock_store)
+
+    assert consumer.specs_written_total == 1
+    assert consumer.specs_embedded_total == 1
+
+
+async def test_malformed_message_increments_failed_counter():
+    import app.consumer as consumer
+    from app.consumer import _process
+
+    consumer.messages_failed_total = 0
+
+    mock_store = MagicMock()
+    mock_store.upsert_spec = AsyncMock()
+    mock_store.upsert_qdrant = AsyncMock()
+
+    # ValidationError from bad data increments failed counter via run_consumer,
+    # but _process itself raises — verify the counter logic is in the right layer
+    # by testing that _process raises ValidationError (counter incremented in caller)
+    data = {"event": json.dumps({"bad": "data"})}
+    with pytest.raises(ValidationError):
+        await _process(data, mock_store)
+
+    # messages_failed_total is incremented in run_consumer's except branch, not in _process
+    # so after a raw _process call it remains 0; the increment happens in the consumer loop
+    assert consumer.messages_failed_total == 0

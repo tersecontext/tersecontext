@@ -14,11 +14,6 @@ _SIDE_EFFECT_LABELS = {
 _SQL_KEYWORDS = {"SELECT", "INSERT", "UPDATE", "DELETE", "FROM", "INTO", "WHERE", "SET", "VALUES"}
 
 
-def _runs_observed(path: ExecutionPath) -> int:
-    """Approximate run count from timing (always at least 1)."""
-    return max(1, round(path.timing_p50_ms)) if path.timing_p50_ms > 0 else 1
-
-
 def _extract_table(detail: str) -> str:
     """Extract table name from a DB side effect detail.
 
@@ -63,11 +58,10 @@ def _extract_service(detail: str) -> str:
 
 
 def render_spec_text(path: ExecutionPath, entrypoint_name: str) -> str:
-    runs = _runs_observed(path)
     lines: list[str] = []
 
     # PATH section
-    lines.append(f"PATH {entrypoint_name}  ({runs} runs observed)")
+    lines.append(f"PATH {entrypoint_name}")
     for i, item in enumerate(path.call_sequence, start=1):
         freq_str = f"{item.frequency_ratio:.2f}"
         ms_str = f"~{item.avg_ms:.1f}ms"
