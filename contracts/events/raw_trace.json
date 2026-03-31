@@ -3,11 +3,12 @@
   "$id": "events/raw_trace",
   "title": "RawTrace",
   "type": "object",
-  "required": ["entrypoint_stable_id", "commit_sha", "duration_ms", "events"],
+  "required": ["entrypoint_stable_id", "commit_sha", "repo", "duration_ms", "events"],
   "additionalProperties": false,
   "properties": {
     "entrypoint_stable_id": { "type": "string" },
     "commit_sha":           { "type": "string" },
+    "repo":                 { "type": "string" },
     "duration_ms":          { "type": "number" },
     "events": {
       "type": "array",
