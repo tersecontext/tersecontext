@@ -5,7 +5,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Query
 
-from app.analyzer import compute_trend_slope, detect_slow_functions
+from app.analyzer import compute_trend_slope, detect_slow_functions, detect_deep_chains
 from app.store import PerfStore
 
 router = APIRouter(prefix="/api/v1")
@@ -124,11 +124,20 @@ async def analyze(repo: str):
     bottlenecks_raw = await store.get_bottlenecks_json(repo)
     bottlenecks = [json.loads(b) for b in bottlenecks_raw]
     counts = await store.get_summary_counts(repo)
-    slow_bottlenecks = detect_slow_functions(slow, repo=repo)
+    # Run all detection functions
+    all_detected = []
+    all_detected.extend(detect_slow_functions(slow, repo=repo))
+
+    # Deep chain detection from call_depth metrics
+    max_depth = int(os.environ.get("MAX_CALL_DEPTH", "15"))
+    depth_rows = await store.get_slow_functions(repo, limit=100)  # reuse query
+    depth_data = [{"entity_id": r["entity_id"], "value": r["value"]} for r in depth_rows]
+    all_detected.extend(detect_deep_chains(depth_data, max_depth=max_depth, repo=repo))
+
     return {
         "repo": repo,
         "pipeline_health": realtime,
-        "bottlenecks": bottlenecks + [b.model_dump(mode="json") for b in slow_bottlenecks],
+        "bottlenecks": bottlenecks + [b.model_dump(mode="json") for b in all_detected],
         "slow_functions": slow,
         "metric_counts": counts,
     }

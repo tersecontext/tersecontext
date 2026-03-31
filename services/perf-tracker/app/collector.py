@@ -11,6 +11,7 @@ import redis.exceptions
 from pydantic import ValidationError
 
 from app.models import PerfMetric
+from app.analyzer import detect_queue_buildup, detect_processing_lag, detect_slow_functions, detect_throughput_drop
 from app.store import PerfStore
 
 logger = logging.getLogger(__name__)
@@ -256,6 +257,55 @@ async def run_collector(store: PerfStore, redis_client: aioredis.Redis) -> None:
                     await store.update_realtime(repo, snapshot)
                     if fn_scores:
                         await store.update_hot_functions(repo, fn_scores)
+
+                # Run bottleneck detection after each realtime cycle
+                all_bottlenecks = []
+
+                # Queue buildup detection
+                curr_depths = {
+                    m.entity_id: int(m.value)
+                    for m in pipeline_metrics if m.metric_name == "queue_depth"
+                }
+                if hasattr(store, '_prev_depths'):
+                    all_bottlenecks.extend(detect_queue_buildup(store._prev_depths, curr_depths, repo="_pipeline"))
+                store._prev_depths = curr_depths
+
+                # Processing lag detection
+                lag_threshold = float(os.environ.get("LAG_THRESHOLD_S", "10"))
+                lag_metrics = [m for m in pending_metrics if m.metric_name == "processing_lag"]
+                if lag_metrics:
+                    lag_values = [m.value for m in lag_metrics]
+                    all_bottlenecks.extend(detect_processing_lag(lag_values, lag_threshold, repo="_pipeline"))
+
+                # Throughput drop detection
+                throughput_drop_pct = float(os.environ.get("THROUGHPUT_DROP_PCT", "50"))
+                throughput_metrics = [m for m in pending_metrics if m.metric_name == "stream_throughput"]
+                for tm in throughput_metrics:
+                    # Use current rate as both current and rolling avg for now
+                    # A proper rolling average would need historical data
+                    if hasattr(store, '_prev_throughput') and tm.entity_id in store._prev_throughput:
+                        all_bottlenecks.extend(detect_throughput_drop(
+                            tm.value, store._prev_throughput[tm.entity_id], throughput_drop_pct,
+                            tm.entity_id, repo="_pipeline",
+                        ))
+                if not hasattr(store, '_prev_throughput'):
+                    store._prev_throughput = {}
+                for tm in throughput_metrics:
+                    store._prev_throughput[tm.entity_id] = tm.value
+
+                # Slow function detection from pending metrics
+                slow_rows = [
+                    {"entity_id": m.entity_id, "value": m.value, "unit": m.unit}
+                    for m in pending_metrics if m.metric_name == "fn_duration"
+                ]
+                if slow_rows:
+                    slow_rows.sort(key=lambda r: r["value"], reverse=True)
+                    all_bottlenecks.extend(detect_slow_functions(slow_rows[:20], repo=repos.pop() if repos else "_pipeline"))
+
+                if all_bottlenecks:
+                    bottleneck_jsons = [b.model_dump_json() for b in all_bottlenecks]
+                    await store.update_bottlenecks("_pipeline", bottleneck_jsons)
+
                 last_realtime = now
 
             if now - last_history >= history_interval and pending_metrics:
