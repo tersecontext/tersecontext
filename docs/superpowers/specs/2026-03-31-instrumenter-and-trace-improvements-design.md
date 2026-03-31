@@ -36,7 +36,7 @@ In-memory dict keyed by `session_id`. Each session holds:
 - `trace_events: list[TraceEvent]` — accumulated events
 - `patches: list[PatchSpec]` — active mock patches from PATCH_CATALOG
 - `capture_args: list[str]` — fnmatch patterns for arg capture
-- `coverage_filter: set[str] | None` — `"file:function"` strings from coverage pre-pass
+- `coverage_filter: set[str] | None` — file paths with any executed lines from coverage pre-pass
 - `task_id_counter: int` — monotonic counter for async task IDs
 - `tempdir: str` — redirect target for file writes
 
@@ -44,7 +44,7 @@ In-memory dict keyed by `session_id`. Each session holds:
 
 `trace_func(frame, event, arg)`:
 
-1. On `call`/`return`/`exception`: check `coverage_filter` — if set and `f"{filename}:{funcname}"` not in it, skip
+1. On `call`/`return`/`exception`: check `coverage_filter` — if set and `filename` not in it, skip
 2. Build `TraceEvent` with type, fn, file, line, timestamp
 3. If `capture_args` patterns match (via pre-compiled regex): on `call`, serialize `frame.f_locals` with depth-2 recursive serializer (1KB cap); on `return`, serialize `arg`
 4. Stamp current `task_id` from context variable
@@ -68,10 +68,16 @@ POST /run { session_id: str }
 1. Look up session by ID
 2. Enter all mock patches as context managers
 3. Install `sys.settrace(trace_func)`
-4. Execute the entrypoint with 30s `signal.alarm` timeout
+4. Execute the entrypoint with 30s timeout:
+   - **Sync entrypoints:** use `signal.alarm` + SIGALRM handler
+   - **Async entrypoints:** use `asyncio.wait_for(coro, timeout=30)` inside `asyncio.run()`
 5. Uninstall trace, exit patches
 6. Return collected events + wall-clock duration
 7. Clean up session state
+
+### Session eviction
+
+Sessions are stored in-memory with a creation timestamp. A background task runs every 30s and evicts sessions older than 60s that were never `/run`. On eviction, the session's tempdir is removed. Maximum 100 concurrent sessions; `/instrument` returns 503 if limit reached.
 
 ### `/instrument` changes
 
@@ -111,7 +117,7 @@ On every `call`/`return`/`exception` event, stamp current `task_id` from context
 
 ### Entrypoint execution
 
-If entrypoint is a coroutine function, run with `asyncio.run()`.
+If entrypoint is a coroutine function, run with `asyncio.run()` and use `asyncio.wait_for()` for the 30s timeout (not `signal.alarm`, which interacts poorly with the event loop).
 
 ### Cleanup
 
@@ -123,7 +129,7 @@ Restore original `asyncio.create_task`, `asyncio.gather`, remove asyncgen hooks.
 
 ### Configuration
 
-`capture_args` patterns originate from `/instrument` request. Default set: `["*handler*", "*view*", "db_*", "*client*"]`. Overridable per-request.
+`capture_args` patterns originate from `/instrument` request. Default set: `["test_*", "*_handler", "*_view", "db_*"]`. These are fnmatch patterns matched against the bare function name (not the qualified module path). Overridable per-request. Defaults are intentionally narrow to avoid matching framework internals (e.g., `logging.Handler`).
 
 ### The serializer
 
@@ -165,11 +171,12 @@ Trace-runner owns the coverage pre-pass. Runs once per `(repo, commit_sha)`.
 2. Check Redis for `coverage:{repo}:{commit_sha}`
 3. **Cache miss:**
    - Run `pytest --cov --cov-report=json` in repo checkout, 120s timeout
-   - Parse JSON report → flatten to set of `"file:function"` strings
-   - Store in Redis with 24h TTL
-4. **Cache hit:** Deserialize the set
-5. Pass `coverage_filter` to instrumenter's `/instrument` request
-6. Instrumenter trace function skips events for functions not in filter set
+   - Parse JSON report: extract file paths that have any `executed_lines` (coverage.py reports at line granularity, not function granularity). Flatten to a set of file path strings.
+   - Extract `totals.percent_covered` as `coverage_pct`
+   - Store file set + `coverage_pct` in Redis with 24h TTL
+4. **Cache hit:** Deserialize the set and `coverage_pct`
+5. Pass `coverage_filter` (set of file paths) to instrumenter's `/instrument` request
+6. Instrumenter trace function skips events for functions whose `frame.f_code.co_filename` is not in the filter set
 
 ### Fallback
 
@@ -181,7 +188,11 @@ JSON report's `totals.percent_covered` → `RawTrace.coverage_pct` → spec-gene
 
 ### Filter granularity
 
-File-level. If any function in a file was executed during coverage, all functions in that file pass. Coarser but avoids line-to-function mapping complexity.
+File-level. The `coverage.py` JSON report provides `executed_lines` per file, not per function. If a file has any executed lines, all functions in that file pass the filter. This is coarser than function-level but avoids the complexity of cross-referencing line ranges with AST function definitions.
+
+### Note on `sys.setprofile`
+
+The CLAUDE.md snippet shows both `sys.settrace` and `sys.setprofile`. This design uses only `sys.settrace`. `sys.setprofile` adds `c_call`/`c_return`/`c_exception` for C-extension calls, which are not useful for tracing user-authored Python code. Omitting it reduces overhead.
 
 ---
 
@@ -189,12 +200,20 @@ File-level. If any function in a file was executed during coverage, all function
 
 All new fields are optional for backward compatibility.
 
-### TraceEvent (trace-runner models.py)
+### TraceEvent (trace-runner models.py AND trace-normalizer models.py)
 
+There are two copies of `TraceEvent`: the trace-runner version uses `type: str`, the trace-normalizer version uses `type: Literal["call", "return", "exception"]`. Both must be updated.
+
+**New fields (both copies):**
 ```python
 task_id: Optional[int] = None          # async task correlation
 args: Optional[str] = None             # serialized arguments (JSON string, ≤1KB)
 return_val: Optional[str] = None       # serialized return value (JSON string, ≤1KB)
+```
+
+**trace-normalizer TraceEvent type field must be widened:**
+```python
+type: Literal["call", "return", "exception", "async_call", "async_return"]
 ```
 
 ### RawTrace (trace-runner models.py)
@@ -218,9 +237,9 @@ coverage_filter: Optional[list[str]] = None
 
 ### Downstream impact
 
-- **trace-normalizer:** If `task_id` present on events, partition by task, build sub-trees, link via `async_call`/`async_return`. If absent, existing logic unchanged.
+- **trace-normalizer:** If `task_id` present on events, partition by task, build sub-trees, link via `async_call`/`async_return`. If absent, existing logic unchanged. The normalizer's `CallNode` feeds into the spec-generator's `CallSequenceItem` (which adds `name` and `qualified_name` fields). Async sub-trees are flattened into the `CallNode` list before emission — the spec-generator's `CallSequenceItem` does not need structural changes, only correct hop numbering from the flattened tree.
 - **graph-enricher:** No changes.
-- **spec-generator:** Uses `coverage_pct` when available (prefers pytest-derived over frequency-ratio-derived). Renders arg examples in PATH section when present.
+- **spec-generator:** Uses `coverage_pct` when available. In `store.py`, `upsert_spec` checks `path.coverage_pct` first; if present, uses it for `branch_coverage`. If absent, falls back to `_compute_branch_coverage(path.call_sequence)`. Renders arg examples in PATH section when present.
 
 ---
 
@@ -280,6 +299,8 @@ No Qdrant schema changes — embedded spec text naturally includes arg examples.
 - `test_trace_func_arg_capture` — `args`/`return_val` populated for matches, absent otherwise
 - `test_safe_serialize` — depth limiting, cycle detection, truncation, unserializable fallback
 - `test_async_hooks` — async function with `create_task`/`gather`, verify `async_call`/`async_return` with correct `task_id` linkage
+- `test_async_gather_with_exceptions` — `gather(return_exceptions=True)` and tasks that raise, verify event stream integrity
+- `test_async_nested_create_task` — nested `create_task` calls, verify parent chain
 - `test_io_mocking` — DB/HTTP/file patches intercept without hitting real systems
 - `test_run_endpoint` — integration: `/instrument` then `/run`, verify events
 
@@ -306,7 +327,7 @@ No Qdrant schema changes — embedded spec text naturally includes arg examples.
 
 | File | Changes |
 |------|---------|
-| `services/instrumenter/app/main.py` | `/run` endpoint, session management |
+| `services/instrumenter/app/main.py` | `/run` endpoint, session management, session eviction background task |
 | `services/instrumenter/app/trace.py` | **New:** trace_func, async hooks, I/O mock setup |
 | `services/instrumenter/app/serializer.py` | **New:** safe_serialize with depth/cycle/size handling |
 | `services/instrumenter/app/models.py` | `capture_args`, `coverage_filter` on InstrumentRequest |
@@ -314,7 +335,10 @@ No Qdrant schema changes — embedded spec text naturally includes arg examples.
 | `services/trace-runner/app/runner.py` | Coverage pre-pass before `/instrument` call |
 | `services/trace-runner/app/coverage.py` | **New:** run pytest --cov, parse JSON, cache in Redis |
 | `services/trace-runner/app/models.py` | `task_id`, `args`, `return_val` on TraceEvent; `coverage_pct` on RawTrace |
+| `services/trace-runner/app/instrumenter_client.py` | Pass `capture_args`, `coverage_filter` to `/instrument` |
 | `services/trace-normalizer/app/normalizer.py` | Async-aware call tree reconstruction |
-| `services/trace-normalizer/app/models.py` | `coverage_pct` on ExecutionPath (if separate from normalizer.py) |
+| `services/trace-normalizer/app/models.py` | Widen TraceEvent type Literal; `coverage_pct` on ExecutionPath |
 | `services/spec-generator/app/renderer.py` | Arg examples in PATH section |
 | `services/spec-generator/app/consumer.py` | Use `coverage_pct` for branch_coverage |
+| `services/spec-generator/app/store.py` | Prefer `coverage_pct` over frequency-ratio for branch_coverage |
+| `services/spec-generator/app/models.py` | Add `coverage_pct` to ExecutionPath (if defined here) |
