@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from tree_sitter import Node
 
-from .extractor import _sha256, _text, stable_id, node_hash
+from .go_stable_id import stable_id, node_hash
 from .models import IntraFileEdge, ParsedNode
 from .go_nodes import extract_nodes_go
 from .go_edges import infer_calls_edges_go
