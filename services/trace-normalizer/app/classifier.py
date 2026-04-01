@@ -19,6 +19,39 @@ _HTTP_EXACT = re.compile(r"(?:http|httpx|requests?|client)[_\.](?:request|send|g
 _FS_WRITE_EXACT = re.compile(r"(?:^|[_\.])write(?:[_\.]|$)|(?:^|[_\.])open(?:[_\.]|$)")
 
 
+_SQL_READ = re.compile(r"^\s*(SELECT|WITH)\b", re.IGNORECASE)
+
+
+def classify_io_events(io_events: list[dict]) -> list[SideEffect]:
+    """
+    Classify intercepted I/O events from mock patches.
+    Produces richer side-effect details than function-name matching:
+    actual SQL strings, HTTP method+URL, file paths.
+    """
+    effects: list[SideEffect] = []
+    seen: set[tuple] = set()
+
+    for ev in io_events:
+        action = ev.get("action", "")
+        detail = ev.get("detail", "")
+
+        if action == "mock_db":
+            kind = "db_read" if _SQL_READ.match(detail) else "db_write"
+        elif action == "mock_http":
+            kind = "http_out"
+        elif action == "redirect_writes":
+            kind = "fs_write"
+        else:
+            continue
+
+        key = (kind, detail)
+        if key not in seen:
+            seen.add(key)
+            effects.append(SideEffect(type=kind, detail=detail, hop_depth=0))
+
+    return effects
+
+
 def classify_side_effects(events: list[TraceEvent]) -> list[SideEffect]:
     effects: list[SideEffect] = []
     seen: set[tuple] = set()

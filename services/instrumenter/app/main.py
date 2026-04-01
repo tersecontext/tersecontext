@@ -228,6 +228,7 @@ def run(req: RunRequest):
 
     duration_ms = (time.monotonic() - start) * 1000.0
     events = [e.model_dump() for e in session.events]
+    io_event_dicts = [{"action": e.action, "detail": e.detail} for e in io_events]
 
     # Clean up session and its tempdir
     shutil.rmtree(session.tempdir, ignore_errors=True)
@@ -235,4 +236,4 @@ def run(req: RunRequest):
     _session_created_at.pop(req.session_id, None)
     _runs_completed += 1
 
-    return {"events": events, "duration_ms": round(duration_ms, 3)}
+    return {"events": events, "io_events": io_event_dicts, "duration_ms": round(duration_ms, 3)}

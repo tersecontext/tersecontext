@@ -7,7 +7,7 @@ import logging
 
 from shared.consumer import RedisConsumerBase
 
-from .classifier import classify_side_effects
+from .classifier import classify_io_events, classify_side_effects
 from .emitter import emit_execution_path
 from .models import ExecutionPath, RawTrace
 from .normalizer import aggregate_frequencies, compute_percentiles, reconstruct_call_tree
@@ -53,6 +53,12 @@ class NormalizerConsumer(RedisConsumerBase):
 
         nodes = aggregate_frequencies(r, repo, trace.entrypoint_stable_id, nodes, max_runs)
         side_effects = classify_side_effects(trace.events)
+        if trace.io_events:
+            io_side_effects = classify_io_events(trace.io_events)
+            # io_events carry actual SQL/URL content; suppress generic fn-name
+            # effects for the same types, but keep trace-based cache detection.
+            io_types = {e.type for e in io_side_effects}
+            side_effects = io_side_effects + [e for e in side_effects if e.type not in io_types]
         observed_fns = {ev.fn for ev in trace.events if ev.type == "call"}
         dynamic_only, never_observed = reconcile(driver, repo, trace.entrypoint_stable_id, observed_fns)
 

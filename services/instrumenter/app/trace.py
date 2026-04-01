@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import fnmatch
+import os as _os
 import re
 import sysconfig as _sysconfig
 import time
@@ -24,6 +25,10 @@ _EXCLUDE_PREFIXES: tuple[str, ...] = tuple(
     )
     if p is not None
 )
+
+# Exclude this file itself so internal wrappers (e.g. _wrapper in async hooks)
+# never appear as user-visible call events.
+_THIS_FILE = _os.path.abspath(__file__)
 
 
 class TraceEvent(BaseModel):
@@ -74,11 +79,12 @@ def create_trace_func(session: TraceSession):
     t0 = time.monotonic()
 
     def trace_func(frame, event, arg):
-        # Prune stdlib/site-packages subtrees immediately.
+        # Prune stdlib/site-packages subtrees and this file's own frames
+        # (e.g. the _wrapper coroutine injected by install_async_hooks).
         # Returning None stops CPython from calling trace_func for any
         # descendant frame — this is the critical subtree-pruning behavior.
         filename = frame.f_code.co_filename
-        if filename.startswith(_EXCLUDE_PREFIXES):
+        if filename.startswith(_EXCLUDE_PREFIXES) or filename == _THIS_FILE:
             return None
 
         if event not in ("call", "return", "exception"):

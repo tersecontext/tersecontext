@@ -123,11 +123,12 @@ async def test_run_returns_events_and_duration():
 
     client = InstrumenterClient(base_url="http://localhost:8093")
     client._client.post = AsyncMock(return_value=mock_response)
-    events, duration_ms = await client.run(session_id="sess-uuid")
+    events, io_events, duration_ms = await client.run(session_id="sess-uuid")
     await client.aclose()
 
     assert len(events) == 2
     assert isinstance(events[0], TraceEvent)
+    assert io_events == []
     assert duration_ms == 28.0
 
 
@@ -217,7 +218,7 @@ async def test_process_job_calls_instrumenter_and_emits():
 
     mock_client = AsyncMock()
     mock_client.instrument.return_value = "sess-uuid"
-    mock_client.run.return_value = (events, 10.0)
+    mock_client.run.return_value = (events, [], 10.0)
 
     emitted = []
 
@@ -397,7 +398,7 @@ async def test_run_worker_increments_jobs_processed_on_ok():
 
     mock_instrumenter = AsyncMock()
     mock_instrumenter.instrument.return_value = "sess-uuid"
-    mock_instrumenter.run.return_value = (events, 10.0)
+    mock_instrumenter.run.return_value = (events, [], 10.0)
     mock_instrumenter.aclose = AsyncMock()
 
     with patch("app.runner.aioredis.from_url", return_value=mock_r), \

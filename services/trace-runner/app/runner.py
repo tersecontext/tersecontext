@@ -62,7 +62,7 @@ async def process_job(
             capture_args=capture_args,
             coverage_filter=list(coverage_filter) if coverage_filter else None,
         )
-        events, duration_ms = await instrumenter.run(session_id=session_id)
+        events, io_events, duration_ms = await instrumenter.run(session_id=session_id)
     except Exception as exc:
         logger.error("Instrumenter failed for %s: %s", job.stable_id, exc)
         return "error"
@@ -73,6 +73,7 @@ async def process_job(
         repo=job.repo,
         duration_ms=duration_ms,
         events=events,
+        io_events=io_events,
         coverage_pct=coverage_pct,
     )
     await emit_fn(r, trace)

@@ -21,6 +21,7 @@ class RawTrace(BaseModel):
     repo: Optional[str] = None
     duration_ms: float
     events: list[TraceEvent]
+    io_events: list[dict] = []
     coverage_pct: Optional[float] = None
 
 
