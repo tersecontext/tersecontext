@@ -3,8 +3,7 @@ from __future__ import annotations
 from tree_sitter import Node
 
 from .models import FileChangedEvent, IntraFileEdge, ParsedNode
-from .py_stable_id import _sha256, stable_id, node_hash
-from .py_nodes import _text, extract_nodes
+from .py_nodes import extract_nodes
 from .py_edges import infer_calls_edges
 
 

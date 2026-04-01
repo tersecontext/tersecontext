@@ -64,6 +64,8 @@ async def run_collector(store: PerfStore, redis_client: aioredis.Redis) -> None:
     trace_timestamps: dict[str, float] = {}
     _MAX_TRACE_TIMESTAMPS = 10000
     throughput_counts: dict[str, list[float]] = {}
+    prev_depths: dict[str, int] = {}
+    prev_throughput: dict[str, float] = {}
 
     while True:
         try:
@@ -181,9 +183,9 @@ async def run_collector(store: PerfStore, redis_client: aioredis.Redis) -> None:
                     m.entity_id: int(m.value)
                     for m in pipeline_metrics if m.metric_name == "queue_depth"
                 }
-                if hasattr(store, '_prev_depths'):
-                    all_bottlenecks.extend(detect_queue_buildup(store._prev_depths, curr_depths, repo="_pipeline"))
-                store._prev_depths = curr_depths
+                if prev_depths:
+                    all_bottlenecks.extend(detect_queue_buildup(prev_depths, curr_depths, repo="_pipeline"))
+                prev_depths = curr_depths
 
                 # Processing lag detection
                 lag_threshold = float(os.environ.get("LAG_THRESHOLD_S", "10"))
@@ -196,17 +198,13 @@ async def run_collector(store: PerfStore, redis_client: aioredis.Redis) -> None:
                 throughput_drop_pct = float(os.environ.get("THROUGHPUT_DROP_PCT", "50"))
                 throughput_metrics = [m for m in pending_metrics if m.metric_name == "stream_throughput"]
                 for tm in throughput_metrics:
-                    # Use current rate as both current and rolling avg for now
-                    # A proper rolling average would need historical data
-                    if hasattr(store, '_prev_throughput') and tm.entity_id in store._prev_throughput:
+                    if tm.entity_id in prev_throughput:
                         all_bottlenecks.extend(detect_throughput_drop(
-                            tm.value, store._prev_throughput[tm.entity_id], throughput_drop_pct,
+                            tm.value, prev_throughput[tm.entity_id], throughput_drop_pct,
                             tm.entity_id, repo="_pipeline",
                         ))
-                if not hasattr(store, '_prev_throughput'):
-                    store._prev_throughput = {}
                 for tm in throughput_metrics:
-                    store._prev_throughput[tm.entity_id] = tm.value
+                    prev_throughput[tm.entity_id] = tm.value
 
                 # Slow function detection from pending metrics
                 slow_rows = [
@@ -215,7 +213,7 @@ async def run_collector(store: PerfStore, redis_client: aioredis.Redis) -> None:
                 ]
                 if slow_rows:
                     slow_rows.sort(key=lambda r: r["value"], reverse=True)
-                    all_bottlenecks.extend(detect_slow_functions(slow_rows[:20], repo=repos.pop() if repos else "_pipeline"))
+                    all_bottlenecks.extend(detect_slow_functions(slow_rows[:20], repo=next(iter(repos)) if repos else "_pipeline"))
 
                 if all_bottlenecks:
                     bottleneck_jsons = [b.model_dump_json() for b in all_bottlenecks]
