@@ -403,7 +403,7 @@ services:
     networks:
       - tersecontext
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:8087/health"]
+      test: ["CMD", "wget", "-qO-", "http://localhost:8088/health"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -428,7 +428,7 @@ services:
     networks:
       - tersecontext
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:8088/health"]
+      test: ["CMD", "wget", "-qO-", "http://localhost:8089/health"]
       interval: 10s
       timeout: 5s
       retries: 5
