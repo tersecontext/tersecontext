@@ -11,9 +11,10 @@ from datetime import datetime, timezone
 import redis as redis_lib
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse, PlainTextResponse
+from neo4j import GraphDatabase
 
 from .models import HookRequest, IndexRequest
-from .watcher import _get_last_sha, _repo_name, _set_last_sha, process_commit, run_watcher
+from .watcher import _get_last_indexed_at, _get_last_sha, _repo_name, _set_last_sha, process_commit, run_watcher
 
 logger = logging.getLogger(__name__)
 
@@ -119,6 +120,39 @@ def index(req: IndexRequest):
     except Exception as exc:
         logger.error("Index processing failed: %s", exc)
         raise HTTPException(status_code=500, detail="Index processing failed")
+
+
+@app.get("/repos/{name}/status")
+def repo_status(name: str):
+    r = _get_redis()
+    last_sha = _get_last_sha(r, name) or ""
+    last_indexed_at = _get_last_indexed_at(r, name)
+
+    node_count = None
+    neo4j_url = os.environ.get("NEO4J_URL")
+    if neo4j_url:
+        neo4j_user = os.environ.get("NEO4J_USER", "neo4j")
+        neo4j_password = os.environ.get("NEO4J_PASSWORD", "")
+        try:
+            with GraphDatabase.driver(neo4j_url, auth=(neo4j_user, neo4j_password)) as driver:
+                with driver.session() as session:
+                    result = session.run(
+                        "MATCH (n:Node {repo: $repo}) RETURN count(n) AS count",
+                        repo=name,
+                    )
+                    record = result.single()
+                    if record:
+                        node_count = record["count"]
+        except Exception as exc:
+            logger.warning("Neo4j query failed for repo %s: %s", name, exc)
+
+    return {
+        "repo": name,
+        "last_sha": last_sha,
+        "last_indexed_at": last_indexed_at,
+        "node_count": node_count,
+        "indexed": bool(last_sha),
+    }
 
 
 @app.get("/status")

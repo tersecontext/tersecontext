@@ -5,6 +5,7 @@ import asyncio
 import logging
 import os
 import subprocess
+from datetime import datetime, timezone
 
 import redis
 
@@ -15,6 +16,7 @@ from .models import FileChangedEvent
 logger = logging.getLogger(__name__)
 
 SHA_KEY_PREFIX = "last_indexed_sha:"
+AT_KEY_PREFIX = "last_indexed_at:"
 
 
 def _get_last_sha(r: redis.Redis, repo: str) -> str | None:
@@ -22,8 +24,14 @@ def _get_last_sha(r: redis.Redis, repo: str) -> str | None:
     return val.decode() if val else None
 
 
+def _get_last_indexed_at(r: redis.Redis, repo: str) -> str | None:
+    val = r.get(f"{AT_KEY_PREFIX}{repo}")
+    return val.decode() if val else None
+
+
 def _set_last_sha(r: redis.Redis, repo: str, sha: str) -> None:
     r.set(f"{SHA_KEY_PREFIX}{repo}", sha)
+    r.set(f"{AT_KEY_PREFIX}{repo}", datetime.now(timezone.utc).isoformat())
 
 
 def _repo_name(repo_path: str) -> str:

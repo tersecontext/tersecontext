@@ -287,10 +287,15 @@ services:
       # (Mac/Windows) or your host's docker bridge IP (Linux).
       WATCHER_URL: http://localhost:8091
       ALLOWED_REPO_ROOTS: /repos
+      NEO4J_URL: bolt://neo4j:7687
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-localpassword}
     volumes:
       - ${REPOS_DIR:-~/.tersecontext/repos}:/repos:ro
     depends_on:
       redis:
+        condition: service_healthy
+      neo4j:
         condition: service_healthy
     networks:
       - tersecontext
