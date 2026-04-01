@@ -40,6 +40,8 @@ def validate_env(required: list[str], service: str) -> None:
         sys.exit(1)
 ```
 
+Note: `not os.environ.get(k)` treats an **empty string as missing**. This is intentional — an empty `NEO4J_PASSWORD` or `POSTGRES_DSN` is not a valid value and should fail fast just like an absent var. Do not change this to `k not in os.environ`.
+
 ### Call sites
 
 Each service calls `validate_env(...)` at the **top of `lifespan()`**, before any driver or connection is constructed:
@@ -75,25 +77,32 @@ Add counter fields to `GraphEnricherConsumer` in `consumer.py`:
 
 ```python
 self.messages_processed: int = 0
-self.messages_failed: int = 0
-self.nodes_enriched: int = 0
+self.batches_failed: int = 0       # batch-level, not per-message
+self.nodes_enriched: int = 0       # total node-update operations dispatched
 self.dynamic_edges_written: int = 0
 self.confirmed_edges_written: int = 0
 ```
 
-- Increment `messages_processed` in `handle()` after successful parse.
-- Increment `messages_failed` in the `except` branch of `post_batch()`.
-- Increment `nodes_enriched`, `dynamic_edges_written`, `confirmed_edges_written` in `post_batch()` using the batch list lengths before clearing them.
+Increment rules:
+- `messages_processed`: in `handle()` after successful `model_validate_json`.
+- `batches_failed`: in the `except Exception` branch of `post_batch()`. This is a batch-level counter (one increment per failed Neo4j write cycle, not per message). The metric name reflects this.
+- `nodes_enriched`: in `post_batch()`, set to `len(self._batch_node_records)` **before** clearing the list. This counts total node-update operations dispatched (not unique nodes — a node appearing in two messages in the same batch counts twice).
+- `dynamic_edges_written`: `len(self._batch_dynamic_edges)` before clearing.
+- `confirmed_edges_written`: `len(self._batch_observed_ids)` before clearing.
 
-In `main.py`, expose the consumer instance at module level so `/metrics` can read it:
+In `main.py`, expose the consumer instance at module level and assign it inside `lifespan()`:
 
 ```python
+# module level
 _consumer: GraphEnricherConsumer | None = None
+
+# inside lifespan(), after constructing the consumer:
+_consumer = consumer   # <-- must be set here; the /metrics endpoint reads it at request time
 ```
 
 ### trace-runner
 
-Add a module-level `_stats` dataclass (or named tuple) in `runner.py`:
+Add a module-level `_stats` dataclass in `runner.py`:
 
 ```python
 @dataclass
@@ -101,9 +110,22 @@ class RunnerStats:
     jobs_processed: int = 0
     jobs_cached: int = 0
     jobs_failed: int = 0
+
+stats = RunnerStats()
 ```
 
-Expose as `runner.stats` (module-level singleton). Increment inside `run_worker()` at the appropriate branches. `main.py` reads `runner.stats` in `/metrics`.
+Increment rules inside `run_worker()`:
+- `jobs_cached`: after `outcome == "cached"` (returned by both `process_job` and `go_client.process_job`).
+- `jobs_processed`: after `outcome == "ok"`.
+- `jobs_failed`: after `outcome == "error"` **and** in the `except asyncio.TimeoutError` branch (line ~154 — the timeout branch currently only logs and does not set `outcome`; it must also increment `jobs_failed`).
+
+`main.py` imports `stats` at module level and reads it in `/metrics`:
+
+```python
+from .runner import stats as runner_stats   # top-level import in main.py
+```
+
+This must be a top-level import, not deferred inside `_start_worker()`, to avoid creating a stale reference to a different module instance.
 
 ### entrypoint-discoverer
 
@@ -128,6 +150,8 @@ In `services/instrumenter/app/main.py`, line ~114:
 # After
 {"error": f"Max concurrent sessions reached (limit: {MAX_SESSIONS})"}
 ```
+
+`MAX_SESSIONS` remains a hardcoded constant (`100`) — it does not become an env var. The fix is purely to surface its value in the error message.
 
 ---
 
@@ -171,11 +195,18 @@ Status rules:
 
 ### Call site updates
 
-All existing `add_dep_checker(fn)` calls continue to work unchanged (name defaults to `fn.__name__`, required defaults to `True`). Optional deps (e.g. Neo4j in `trace-normalizer`) are registered with `required=False`:
+All existing `add_dep_checker(fn)` calls continue to work unchanged (name defaults to `fn.__name__`, required defaults to `True`).
+
+For `trace-normalizer`, the existing code only registers `check_neo4j` when the driver is not `None` (conditional registration). This pattern is preserved — the checker is still only registered when the driver is present, but the call now passes `required=False`:
 
 ```python
-_svc.add_dep_checker(check_neo4j, name="neo4j", required=False)
+if driver is not None:
+    async def check_neo4j() -> str | None:
+        ...
+    _svc.add_dep_checker(check_neo4j, name="neo4j", required=False)
 ```
+
+A service with no neo4j checker registered (because `NEO4J_URL` was not set) and a service where neo4j is checked and passes are distinguishable: the former simply omits the `neo4j` key from the `deps` dict, which is acceptable — the absence of a key means the dependency was not configured, not that it failed.
 
 ---
 
@@ -213,7 +244,7 @@ The section covers these vars:
 | `services/shared/tests/test_service.py` | Tests for new `validate_env` and structured `/ready` |
 | `services/entrypoint-discoverer/app/main.py` | Call `validate_env`, wire `_jobs_queued_total` counter |
 | `services/graph-enricher/app/main.py` | Call `validate_env`, expose `_consumer` for metrics |
-| `services/graph-enricher/app/consumer.py` | Add counter fields, increment in handle/post_batch |
+| `services/graph-enricher/app/consumer.py` | Add counter fields (`messages_processed`, `batches_failed`, `nodes_enriched`, `dynamic_edges_written`, `confirmed_edges_written`), increment in handle/post_batch |
 | `services/spec-generator/app/main.py` | Call `validate_env` |
 | `services/trace-normalizer/app/main.py` | Conditional `validate_env`, register neo4j dep as optional |
 | `services/trace-runner/app/main.py` | Wire `runner.stats` into metrics |
