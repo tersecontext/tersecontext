@@ -6,7 +6,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     curl \
     git \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && git config --global --add safe.directory '*'
 
 RUN pip install --no-cache-dir uv
 
