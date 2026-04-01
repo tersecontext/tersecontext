@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -10,6 +11,22 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
 logger = logging.getLogger(__name__)
+
+
+def validate_env(required: list[str], service: str) -> None:
+    """Exit immediately if any required env var is missing or empty.
+
+    Treats empty string as missing — an empty NEO4J_PASSWORD is not valid.
+    Collects all missing vars before exiting so the user sees everything at once.
+    """
+    missing = [k for k in required if not os.environ.get(k)]
+    if missing:
+        lines = [f"[{service}] Missing required environment variables:"]
+        for k in missing:
+            lines.append(f"  - {k}")
+        lines.append("See usage.md for configuration details.")
+        print("\n".join(lines), file=sys.stderr)
+        sys.exit(1)
 
 
 class ServiceBase:

@@ -174,3 +174,40 @@ async def test_consumer_does_not_ack_on_transient_error():
             await consumer.run("redis://localhost:6379")
 
     mock_redis.xack.assert_not_called()
+
+
+def test_validate_env_passes_when_all_vars_set(monkeypatch):
+    monkeypatch.setenv("FOO", "bar")
+    monkeypatch.setenv("BAZ", "qux")
+    from shared.service import validate_env
+    validate_env(["FOO", "BAZ"], "test-svc")  # must not raise or exit
+
+
+def test_validate_env_exits_when_var_missing(monkeypatch, capsys):
+    monkeypatch.delenv("MISSING_VAR", raising=False)
+    from shared.service import validate_env
+    with pytest.raises(SystemExit) as exc_info:
+        validate_env(["MISSING_VAR"], "test-svc")
+    assert exc_info.value.code == 1
+    captured = capsys.readouterr()
+    assert "MISSING_VAR" in captured.err
+    assert "test-svc" in captured.err
+    assert "usage.md" in captured.err
+
+
+def test_validate_env_reports_all_missing_at_once(monkeypatch, capsys):
+    monkeypatch.delenv("VAR_A", raising=False)
+    monkeypatch.delenv("VAR_B", raising=False)
+    from shared.service import validate_env
+    with pytest.raises(SystemExit):
+        validate_env(["VAR_A", "VAR_B"], "test-svc")
+    captured = capsys.readouterr()
+    assert "VAR_A" in captured.err
+    assert "VAR_B" in captured.err
+
+
+def test_validate_env_treats_empty_string_as_missing(monkeypatch, capsys):
+    monkeypatch.setenv("EMPTY_VAR", "")
+    from shared.service import validate_env
+    with pytest.raises(SystemExit):
+        validate_env(["EMPTY_VAR"], "test-svc")
