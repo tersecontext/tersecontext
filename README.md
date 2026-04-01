@@ -49,6 +49,10 @@ The context doc is plain text — paste it directly before your question in any 
 
 ## How it works
 
+![TerseContext pipeline overview](docs/images/overview.svg)
+
+
+
 - Parses your codebase into a knowledge graph using Tree-sitter (Python + Go)
 - Enriches nodes with observed runtime behaviour from your test suite
 - Merges static and dynamic signals with provenance tags (static / spec.N% / runtime-only)
