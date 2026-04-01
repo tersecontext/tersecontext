@@ -6,44 +6,46 @@ TerseContext is a code indexing system that produces the smallest, highest-confi
 
 ## What the output looks like
 
-Ask: `"how does authentication work?"`
+Ask: `"what are the external connections for data inflows"`
 
 ~~~
-QUERY:       how does authentication work?
-SEEDS:       A1 *  A2 *
-CONFIDENCE:  high  (47 observed runs · 94% coverage · 0 warnings)
-REPO:        acme-api
+QUERY:       what are the external connections for data inflows
+SEEDS:       Fo.1 * Fo.2 * Fo.3 * Fo.4 * Fo.5 * Fo.6 * Fo.7 * Fo.8 * Fo.9 * Fo.10 * Fo.11 * Fo.12 * Fo.13 * Fo.14 *
+CONFIDENCE:  medium  (0 observed runs · static only · 0 warnings)
+REPO:        getuser
 
-A1 *  auth.service.authenticate(credentials)    spec.94%
-A2 *  auth.service.hash_password(pw, salt)      spec.89%
-B1    db.users.get_by_email(email)               static
-B2    audit.logger.log(event, user_id)           runtime-only
+Fo.1  *  func TestExternalDatabase_AllowInboundNetwork(T *testing.T)          static
+Fo.2  *  func TestImportData_InboundDataSource(T *testing.T)                  static
+Fo.3  *  func TestFeedProvider_InboundSourceRecord(T *testing.T)  string       static
+Fo.4  *  func TestExternalMetadata_InboundRecord(T *testing.T)                static
+Fo.5  *  func TestDataStream_ExternalIngressConfig(T *testing.T)  string       static
+Fo.6  *  func TestAuditableDataExchange_InboundStream(T *testing.T)           static
+Fo.7  *  func TestSchemaValidator_CheckInboundRecord(T *testing.T)            static
+Fo.8  *  func TestExternalConnector_GetNetworkSources(T *testing.T)  Named    static
+Fo.9  *  func TestDataConnector_GetExternalNetwork(T *testing.T)  NamedBool   static
+Fo.10 *  func TestRateLimit_ApplyToIngestStream(T *testing.T)                 static
+Fo.11 *  func TestExternalFeed_RegisterDataInflow(T *testing.T)               static
+Fo.12 *  func TestExternalDB_OpenConnection(T *testing.T)                     static
+Fo.13 *  func TestRetry_OnExternalFailure(T *testing.T)                       static
+Fo.14 *  func TestExternalCache_TrackInboundReads(T *testing.T)               static
 
-CALLS:
-  A1 -> B1
-  A1 -> A2
-  A1 -> B2  [runtime-only]
+BODY Fo.1 (* static · no spec)
+  func TestExternalData_GetExternalNetwork(t *testing.T) {
+      actualInput  := t.TempDir()
+      actualOutput := t.TempDir()
+      profilePath  := profileManager.LoadConfig(t, "external")
 
-PATH A1 (* seed · 47 runs observed)
-  1.  get_by_email      47/47 runs   ~12ms
-  2a. hash_password     47/47 runs   ~2ms
-  2b. [not found]       3/47 runs    exits early → returns None
-  3.  log              44/47 runs   conditional · success path
+      // Try to connect to an external DB - should be denied
+      dbClient, err := sql.Open("postgres", os.Getenv("EXTERNAL_DB_DSN"))
+      require.NoError(t, err)
+      _, err = dbClient.Connect(context.TODO(), actualInput, actualOutput)
 
-PATH A2 (* seed · 47 runs observed)
-  1.  bcrypt.hashpw     47/47 runs   ~1ms
-
-BODY B1 (* static · no spec)
-  def get_by_email(self, email: str) -> Optional[User]:
-      return self.session.query(User).filter_by(email=email).first()
-
-SIDE_EFFECTS A1:
-  DB READ   users WHERE email = ?
-  DB WRITE  audit_log INSERT
-  CACHE GET session:{user_id} TTL 3600
+      t.Fatal("number of found external network inflows - expected dbClient")
+  }
+  t.Log("terminal network currently denies %s", strings.TrimSpace(stdout))
 ~~~
 
-Token count: 312 / 2000 budget
+Token count: 487 / 2000 budget
 
 The context doc is plain text — paste it directly before your question in any LLM prompt.
 
@@ -102,7 +104,7 @@ curl -X POST http://localhost:8091/install-hook \
 # Then query it
 curl -X POST http://localhost:8090/query \
   -H 'Content-Type: application/json' \
-  -d '{"repo": "your-repo", "question": "how does authentication work?"}'
+  -d '{"repo": "your-repo", "question": "what are the external connections for data inflows"}'
 ```
 
 ## License
