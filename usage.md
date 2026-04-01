@@ -168,6 +168,27 @@ ALLOWED_REPO_ROOTS=/repos
 VOYAGE_API_KEY=              # optional; omit to use local Ollama embeddings
 ```
 
+## Dynamic Analysis Pipeline — Environment Variables
+
+Services with required environment variables validate them at startup. If a required variable is absent or empty, the service prints a clear error listing every missing variable and exits immediately so the problem is visible in `docker compose logs`.
+
+| Variable | Required by | Default | Description |
+|---|---|---|---|
+| `NEO4J_PASSWORD` | entrypoint-discoverer, graph-enricher, trace-normalizer (when NEO4J_URL set) | — | Neo4j authentication password |
+| `NEO4J_URL` | entrypoint-discoverer, graph-enricher, trace-normalizer | `bolt://localhost:7687` | Neo4j bolt URL |
+| `NEO4J_USER` | entrypoint-discoverer, graph-enricher, trace-normalizer | `neo4j` | Neo4j username |
+| `POSTGRES_DSN` | entrypoint-discoverer, spec-generator | — | PostgreSQL connection string (`postgresql://user:pass@host/db`) |
+| `REDIS_URL` | all | `redis://localhost:6379` | Redis connection URL |
+| `QDRANT_URL` | spec-generator | `http://localhost:6333` | Qdrant URL |
+| `INSTRUMENTER_URL` | trace-runner | `http://localhost:8093` | URL of the instrumenter service |
+| `COMMIT_SHA` | trace-runner | `unknown` | Git commit SHA for trace cache keying |
+| `REPOS` | trace-runner | `""` | Comma-separated list of repo names to watch |
+| `EMBEDDING_PROVIDER` | spec-generator | `ollama` | `ollama` or `voyage` |
+| `EMBEDDING_DIM` | spec-generator | `768` (ollama) / `1024` (voyage) | Embedding vector dimension |
+| `TIMEOUT_MS` | instrumenter | `30000` | Max execution time per trace run (ms) |
+
+Variables marked **—** in the Default column have no default and will cause an immediate startup failure if absent.
+
 ## Docker networking note
 
 The git hook installed by `POST /install-hook` calls back to `WATCHER_URL` (default `http://localhost:8091`). This works when:
