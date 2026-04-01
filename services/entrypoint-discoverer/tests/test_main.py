@@ -83,3 +83,48 @@ def test_discover_rejects_invalid_trigger():
     client = _make_client()
     resp = client.post("/discover", json={"repo": "myrepo", "trigger": "invalid"})
     assert resp.status_code == 422
+
+
+def test_metrics_shows_live_jobs_queued():
+    """_jobs_queued_total accumulates across discover calls and appears in /metrics."""
+    import app.main as main_mod
+
+    original = main_mod._jobs_queued_total
+    main_mod._jobs_queued_total = 0
+    try:
+        with patch("app.main._get_neo4j_driver", return_value=MagicMock()), \
+             patch("app.main._get_pg_conn", return_value=MagicMock()), \
+             patch("app.main._get_redis", return_value=MagicMock()), \
+             patch("app.main.run_discover", return_value={"discovered": 3, "queued": 2}):
+            from app.main import app
+            client = TestClient(app)
+            client.post("/discover", json={"repo": "myrepo", "trigger": "schedule"})
+            client.post("/discover", json={"repo": "myrepo", "trigger": "schedule"})
+            resp = client.get("/metrics")
+    finally:
+        main_mod._jobs_queued_total = original
+
+    assert resp.status_code == 200
+    assert "entrypoint_discoverer_jobs_queued_total 4" in resp.text
+
+
+def test_metrics_does_not_increment_on_discover_error():
+    """_jobs_queued_total does NOT increment when run_discover raises."""
+    import app.main as main_mod
+
+    original = main_mod._jobs_queued_total
+    main_mod._jobs_queued_total = 0
+    try:
+        with patch("app.main._get_neo4j_driver", return_value=MagicMock()), \
+             patch("app.main._get_pg_conn", return_value=MagicMock()), \
+             patch("app.main._get_redis", return_value=MagicMock()), \
+             patch("app.main.run_discover", side_effect=Exception("DB down")):
+            from app.main import app
+            client = TestClient(app)
+            resp_discover = client.post("/discover", json={"repo": "myrepo", "trigger": "schedule"})
+            resp_metrics = client.get("/metrics")
+    finally:
+        main_mod._jobs_queued_total = original
+
+    assert resp_discover.status_code == 500
+    assert "entrypoint_discoverer_jobs_queued_total 0" in resp_metrics.text

@@ -24,6 +24,7 @@ _svc = ServiceBase("entrypoint-discoverer", VERSION)
 _neo4j_driver = None
 _pg_conn = None
 _redis_client = None
+_jobs_queued_total: int = 0
 
 
 def _get_neo4j_driver():
@@ -84,7 +85,7 @@ def metrics():
     lines = [
         "# HELP entrypoint_discoverer_jobs_queued_total Total EntrypointJobs pushed to Redis",
         "# TYPE entrypoint_discoverer_jobs_queued_total counter",
-        "entrypoint_discoverer_jobs_queued_total 0",
+        f"entrypoint_discoverer_jobs_queued_total {_jobs_queued_total}",
     ]
     return PlainTextResponse("\n".join(lines) + "\n")
 
@@ -99,6 +100,8 @@ def discover(req: DiscoverRequest):
             repo=req.repo,
             trigger=req.trigger,
         )
+        global _jobs_queued_total
+        _jobs_queued_total += result["queued"]
         return DiscoverResponse(**result)
     except Exception as exc:
         logger.error("Discover failed: %s", exc)
