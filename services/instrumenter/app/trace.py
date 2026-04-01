@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import fnmatch
 import re
+import sysconfig as _sysconfig
 import time
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -11,6 +12,18 @@ from typing import Any, Optional
 from pydantic import BaseModel
 
 from .serializer import safe_serialize
+
+# Full absolute path prefixes for stdlib and installed packages.
+# Returning None from trace_func prunes CPython's trace for the entire
+# subtree below that frame — no events emitted, significant overhead saved.
+_EXCLUDE_PREFIXES: tuple[str, ...] = tuple(
+    p for p in (
+        _sysconfig.get_path("stdlib"),    # e.g. /usr/lib/python3.12
+        _sysconfig.get_path("purelib"),   # e.g. /usr/local/lib/python3.12/dist-packages
+        _sysconfig.get_path("platlib"),   # platform-specific site-packages
+    )
+    if p is not None
+)
 
 
 class TraceEvent(BaseModel):
@@ -61,10 +74,15 @@ def create_trace_func(session: TraceSession):
     t0 = time.monotonic()
 
     def trace_func(frame, event, arg):
+        # Prune stdlib/site-packages subtrees immediately.
+        # Returning None stops CPython from calling trace_func for any
+        # descendant frame — this is the critical subtree-pruning behavior.
+        filename = frame.f_code.co_filename
+        if filename.startswith(_EXCLUDE_PREFIXES):
+            return None
+
         if event not in ("call", "return", "exception"):
             return trace_func
-
-        filename = frame.f_code.co_filename
         funcname = frame.f_code.co_name
 
         # Coverage filter: skip files not in the filter set
