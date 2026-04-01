@@ -68,6 +68,15 @@ Go dynamic tracing via go-instrumenter + go-trace-runner (runtime via `tracert` 
 
 **Query pipeline** — query-understander → dual-retriever → subgraph-expander → serializer → api-gateway
 
+## Why these stores
+
+| Store | Static pipeline | Dynamic pipeline | Why |
+|-------|----------------|-----------------|-----|
+| **Neo4j** | Nodes, CALLS + IMPORTS edges | Runtime edges, confirmed/conflict markers | Code is a graph. Cypher traversals find callers, callees, and dependency chains in one query — a relational join chain cannot. |
+| **Qdrant** | Code embeddings (`nodes` collection) | Spec embeddings (`specs` collection) | Semantic search over embeddings. Finds code relevant to a question even when no keyword matches. |
+| **Postgres** | — | `behavior_specs` table (versioned, queryable) | Structured records with SQL. Specs need joins, history, and UNIQUE constraints — a document store would fight this. |
+| **Redis** | Event streams between services | Job queues + trace event streams | Services communicate through Redis lists (jobs) and streams (events). Fast, ordered, no broker to operate. |
+
 ## Quick start
 
 See [usage.md](usage.md) for full setup instructions.
