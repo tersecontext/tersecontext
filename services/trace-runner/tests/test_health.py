@@ -48,4 +48,7 @@ def test_ready_503_when_redis_down():
         main_mod.app.router.lifespan_context = original
 
     assert resp.status_code == 503
-    assert "redis" in resp.json()["errors"][0]
+    body = resp.json()
+    assert "check_redis" in body["deps"]
+    assert body["deps"]["check_redis"]["status"] == "error"
+    assert "redis" in body["deps"]["check_redis"]["error"]
