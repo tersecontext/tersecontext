@@ -2,6 +2,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from dataclasses import dataclass
 from typing import Callable, Awaitable
 
 import redis.asyncio as aioredis
@@ -14,6 +15,16 @@ from .instrumenter_client import InstrumenterClient
 from .models import EntrypointJob, RawTrace
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class RunnerStats:
+    jobs_processed: int = 0
+    jobs_cached: int = 0
+    jobs_failed: int = 0
+
+
+stats = RunnerStats()
 
 STREAM_OUT = "stream:raw-traces"
 
@@ -151,8 +162,15 @@ async def run_worker(
                             timeout=30.0,
                         )
                     logger.info("Job %s [%s]: %s", job.stable_id, job.language, outcome)
+                    if outcome == "cached":
+                        stats.jobs_cached += 1
+                    elif outcome == "ok":
+                        stats.jobs_processed += 1
+                    elif outcome == "error":
+                        stats.jobs_failed += 1
                 except asyncio.TimeoutError:
                     logger.error("Job timed out: %s", job.stable_id)
+                    stats.jobs_failed += 1
             except asyncio.CancelledError:
                 raise
             except Exception as exc:

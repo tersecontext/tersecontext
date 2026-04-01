@@ -1,4 +1,5 @@
 import pytest
+import asyncio
 
 # ── Models ────────────────────────────────────────────────────────────────────
 
@@ -327,3 +328,131 @@ def test_metrics_returns_prometheus_text():
             resp = client.get("/metrics")
     assert resp.status_code == 200
     assert "trace_runner_jobs_processed_total" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_run_worker_increments_jobs_cached_on_cache_hit():
+    from unittest.mock import AsyncMock, patch
+    from app.models import EntrypointJob
+    import app.runner as runner_mod
+
+    runner_mod.stats.jobs_processed = 0
+    runner_mod.stats.jobs_cached = 0
+    runner_mod.stats.jobs_failed = 0
+
+    job = EntrypointJob(
+        stable_id="sha256:fn_test", name="test_fn",
+        file_path="tests/test.py", priority=2, repo="test",
+    )
+    raw_job = job.model_dump_json().encode()
+
+    mock_r = AsyncMock()
+    mock_r.blpop.side_effect = [
+        (b"entrypoint_queue:test", raw_job),
+        asyncio.CancelledError(),
+    ]
+    mock_r.exists.return_value = 1  # cache hit
+
+    mock_instrumenter = AsyncMock()
+    mock_instrumenter.aclose = AsyncMock()
+
+    with patch("app.runner.aioredis.from_url", return_value=mock_r), \
+         patch("app.runner.InstrumenterClient", return_value=mock_instrumenter):
+        with pytest.raises(asyncio.CancelledError):
+            await runner_mod.run_worker(
+                redis_url="redis://localhost:6379",
+                instrumenter_url="http://localhost:8093",
+                commit_sha="abc123",
+                repos=["test"],
+            )
+
+    assert runner_mod.stats.jobs_cached == 1
+    assert runner_mod.stats.jobs_processed == 0
+    assert runner_mod.stats.jobs_failed == 0
+
+
+@pytest.mark.asyncio
+async def test_run_worker_increments_jobs_processed_on_ok():
+    from unittest.mock import AsyncMock, patch
+    from app.models import EntrypointJob, TraceEvent
+    import app.runner as runner_mod
+
+    runner_mod.stats.jobs_processed = 0
+    runner_mod.stats.jobs_cached = 0
+    runner_mod.stats.jobs_failed = 0
+
+    job = EntrypointJob(
+        stable_id="sha256:fn_test", name="test_fn",
+        file_path="tests/test.py", priority=2, repo="test",
+    )
+    raw_job = job.model_dump_json().encode()
+    events = [TraceEvent(type="call", fn="f", file="f.py", line=1, timestamp_ms=0.0)]
+
+    mock_r = AsyncMock()
+    mock_r.blpop.side_effect = [
+        (b"entrypoint_queue:test", raw_job),
+        asyncio.CancelledError(),
+    ]
+    mock_r.exists.return_value = 0  # cache miss
+
+    mock_instrumenter = AsyncMock()
+    mock_instrumenter.instrument.return_value = "sess-uuid"
+    mock_instrumenter.run.return_value = (events, 10.0)
+    mock_instrumenter.aclose = AsyncMock()
+
+    with patch("app.runner.aioredis.from_url", return_value=mock_r), \
+         patch("app.runner.InstrumenterClient", return_value=mock_instrumenter):
+        with pytest.raises(asyncio.CancelledError):
+            await runner_mod.run_worker(
+                redis_url="redis://localhost:6379",
+                instrumenter_url="http://localhost:8093",
+                commit_sha="abc123",
+                repos=["test"],
+            )
+
+    assert runner_mod.stats.jobs_processed == 1
+    assert runner_mod.stats.jobs_cached == 0
+    assert runner_mod.stats.jobs_failed == 0
+
+
+@pytest.mark.asyncio
+async def test_run_worker_increments_jobs_failed_on_timeout():
+    from unittest.mock import AsyncMock, patch
+    from app.models import EntrypointJob
+    import app.runner as runner_mod
+
+    runner_mod.stats.jobs_processed = 0
+    runner_mod.stats.jobs_cached = 0
+    runner_mod.stats.jobs_failed = 0
+
+    job = EntrypointJob(
+        stable_id="sha256:fn_test", name="test_fn",
+        file_path="tests/test.py", priority=2, repo="test",
+    )
+    raw_job = job.model_dump_json().encode()
+
+    mock_r = AsyncMock()
+    mock_r.blpop.side_effect = [
+        (b"entrypoint_queue:test", raw_job),
+        asyncio.CancelledError(),
+    ]
+    mock_r.exists.return_value = 0
+
+    mock_instrumenter = AsyncMock()
+    mock_instrumenter.aclose = AsyncMock()
+
+    # Patch asyncio.wait_for so the outer wait_for in run_worker raises TimeoutError,
+    # exercising the `except asyncio.TimeoutError` branch directly.
+    with patch("app.runner.aioredis.from_url", return_value=mock_r), \
+         patch("app.runner.InstrumenterClient", return_value=mock_instrumenter), \
+         patch("app.runner.asyncio.wait_for", side_effect=asyncio.TimeoutError):
+        with pytest.raises(asyncio.CancelledError):
+            await runner_mod.run_worker(
+                redis_url="redis://localhost:6379",
+                instrumenter_url="http://localhost:8093",
+                commit_sha="abc123",
+                repos=["test"],
+            )
+
+    assert runner_mod.stats.jobs_failed == 1
+    assert runner_mod.stats.jobs_processed == 0

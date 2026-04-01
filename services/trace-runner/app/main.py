@@ -10,6 +10,7 @@ logging.basicConfig(level=logging.INFO)
 from fastapi import FastAPI
 from fastapi.responses import PlainTextResponse
 from shared.service import ServiceBase
+from .runner import stats as runner_stats
 
 logger = logging.getLogger(__name__)
 
@@ -76,12 +77,12 @@ def metrics():
     lines = [
         "# HELP trace_runner_jobs_processed_total Total jobs processed",
         "# TYPE trace_runner_jobs_processed_total counter",
-        "trace_runner_jobs_processed_total 0",
+        f"trace_runner_jobs_processed_total {runner_stats.jobs_processed}",
         "# HELP trace_runner_jobs_cached_total Total jobs skipped (cache hit)",
         "# TYPE trace_runner_jobs_cached_total counter",
-        "trace_runner_jobs_cached_total 0",
+        f"trace_runner_jobs_cached_total {runner_stats.jobs_cached}",
         "# HELP trace_runner_jobs_failed_total Total jobs failed",
         "# TYPE trace_runner_jobs_failed_total counter",
-        "trace_runner_jobs_failed_total 0",
+        f"trace_runner_jobs_failed_total {runner_stats.jobs_failed}",
     ]
     return PlainTextResponse("\n".join(lines) + "\n")
