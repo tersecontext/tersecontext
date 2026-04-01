@@ -114,7 +114,7 @@ async def test_upsert_qdrant_calls_embed_and_upsert():
     store._qdrant = mock_qdrant
 
     path = _make_path()
-    await store.upsert_qdrant(path, "login", "spec text here")
+    await store.upsert_qdrant(path, "login", "spec text here", "HIGH")
 
     mock_provider.embed.assert_called_once_with(["spec text here"])
     mock_qdrant.upsert.assert_called_once()
@@ -127,6 +127,7 @@ async def test_upsert_qdrant_calls_embed_and_upsert():
     assert payload["entrypoint_name"] == "login"
     assert payload["repo"] == "acme"
     assert payload["commit_sha"] == "abc123"
+    assert payload["confidence_band"] == "HIGH"
 
 
 async def test_upsert_qdrant_point_id_is_stable():
@@ -144,8 +145,8 @@ async def test_upsert_qdrant_point_id_is_stable():
     store._qdrant = mock_qdrant
 
     path = _make_path()
-    await store.upsert_qdrant(path, "login", "text")
-    await store.upsert_qdrant(path, "login", "text")
+    await store.upsert_qdrant(path, "login", "text", "MEDIUM")
+    await store.upsert_qdrant(path, "login", "text", "MEDIUM")
 
     ids = [call_args[1]["points"][0].id for call_args in mock_qdrant.upsert.call_args_list]
     assert ids[0] == ids[1]

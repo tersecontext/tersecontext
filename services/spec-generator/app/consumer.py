@@ -6,7 +6,7 @@ import logging
 from shared.consumer import RedisConsumerBase
 
 from app.models import ExecutionPath
-from app.renderer import render_spec_text
+from app.renderer import render_spec
 from app.store import SpecStore
 
 logger = logging.getLogger(__name__)
@@ -36,9 +36,9 @@ class SpecGeneratorConsumer(RedisConsumerBase):
             path.call_sequence[0].name if path.call_sequence else path.entrypoint_stable_id
         )
 
-        spec_text = render_spec_text(path, entrypoint_name)
+        spec_text, confidence_band = render_spec(path, entrypoint_name)
         await self._store.upsert_spec(path, spec_text)
         specs_written_total += 1
-        await self._store.upsert_qdrant(path, entrypoint_name, spec_text)
+        await self._store.upsert_qdrant(path, entrypoint_name, spec_text, confidence_band)
         specs_embedded_total += 1
         messages_processed_total += 1

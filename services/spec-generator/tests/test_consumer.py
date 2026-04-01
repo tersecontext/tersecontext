@@ -50,7 +50,7 @@ async def test_process_valid_message_calls_store():
     mock_store.upsert_qdrant.assert_called_once()
 
     # entrypoint_name should be "login" (first call_sequence item)
-    _, entrypoint_name, _ = mock_store.upsert_qdrant.call_args[0]
+    _, entrypoint_name, _, _ = mock_store.upsert_qdrant.call_args[0]
     assert entrypoint_name == "login"
 
 
@@ -61,7 +61,7 @@ async def test_process_empty_call_sequence_falls_back_to_stable_id():
     data = {"event": json.dumps(_make_path_dict(call_sequence=[]))}
     await consumer.handle(data)
 
-    _, entrypoint_name, _ = mock_store.upsert_qdrant.call_args[0]
+    _, entrypoint_name, _, _ = mock_store.upsert_qdrant.call_args[0]
     assert entrypoint_name == "sha256:fn_login"
 
 
@@ -155,6 +155,25 @@ async def test_malformed_message_increments_failed_counter():
 
     # messages_failed_total is incremented in the consumer loop, not in handle()
     assert consumer_mod.messages_failed_total == 0
+
+
+@pytest.mark.asyncio
+async def test_process_passes_confidence_band_to_qdrant():
+    mock_store = MagicMock()
+    mock_store.upsert_spec = AsyncMock()
+    mock_store.upsert_qdrant = AsyncMock()
+
+    consumer = SpecGeneratorConsumer(mock_store)
+    path_dict = _make_path_dict()
+    path_dict["coverage_pct"] = 0.85
+    data = {"event": json.dumps(path_dict).encode()}
+
+    await consumer.handle(data)
+
+    args = mock_store.upsert_qdrant.call_args[0]
+    assert len(args) == 4, f"expected 4 args, got {len(args)}: {args}"
+    confidence_band = args[3]
+    assert confidence_band in ("HIGH", "MEDIUM", "LOW")
 
 
 @pytest.mark.asyncio
