@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch, call
 import pytest
 import redis.exceptions
 
-from app.consumer import _process_event, run_consumer, STREAM, GROUP
+from app.consumer import _process_event, run_consumer, STREAM, GROUP, GraphEnricherConsumer
 from app.models import ExecutionPath, CallNode, SideEffect, DynamicEdge
 
 
@@ -205,6 +205,9 @@ async def test_consumer_handles_malformed_messages():
 
     # Malformed message should still be ACKed (skipped)
     mock_r.xack.assert_called_once_with(STREAM, GROUP, msg_id)
+    # Bad message must be forwarded to the DLQ
+    mock_r.xadd.assert_called_once()
+    assert "dlq" in mock_r.xadd.call_args[0][0]
 
 
 @pytest.mark.asyncio
@@ -236,6 +239,9 @@ async def test_consumer_handles_invalid_json():
 
     # Invalid JSON still ACKed
     mock_r.xack.assert_called_once_with(STREAM, GROUP, msg_id)
+    # Bad message must be forwarded to the DLQ
+    mock_r.xadd.assert_called_once()
+    assert "dlq" in mock_r.xadd.call_args[0][0]
 
 
 @pytest.mark.asyncio
@@ -364,10 +370,6 @@ async def test_consumer_handles_redis_loop_error():
 
 
 # New tests for GraphEnricherConsumer
-
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch, call as mock_call
-from app.consumer import GraphEnricherConsumer
 
 
 @pytest.mark.asyncio

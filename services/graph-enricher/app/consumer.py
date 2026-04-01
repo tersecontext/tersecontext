@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 
 from pydantic import ValidationError
 from shared.consumer import RedisConsumerBase
@@ -69,7 +70,7 @@ class GraphEnricherConsumer(RedisConsumerBase):
         self._batch_observed_ids.extend(observed_ids)
 
     async def post_batch(self) -> None:
-        if not self._batch_node_records:
+        if not self._batch_observed_ids:
             return
         loop = asyncio.get_running_loop()
         try:
@@ -109,5 +110,5 @@ def _process_event(driver, event: ExecutionPath) -> None:
 
 async def run_consumer(driver) -> None:
     """Used by existing unit tests. New code calls GraphEnricherConsumer.run() directly."""
-    redis_url = __import__("os").environ.get("REDIS_URL", "redis://localhost:6379")
+    redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379")
     await GraphEnricherConsumer(driver).run(redis_url)

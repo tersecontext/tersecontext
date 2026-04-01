@@ -41,6 +41,7 @@ async def lifespan(app: FastAPI):
     global _driver
     from .consumer import GraphEnricherConsumer
 
+    _svc._dep_checkers.clear()   # idempotent restart safety
     _driver = _make_driver()
     consumer = GraphEnricherConsumer(_driver)
     redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379")

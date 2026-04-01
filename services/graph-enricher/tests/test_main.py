@@ -26,8 +26,6 @@ def test_ready_ok(client):
 
 def test_ready_503_redis_down(mock_redis, mock_driver):
     mock_redis.ping.side_effect = Exception("connection refused")
-    import app.main
-    app.main._svc._dep_checkers = []
     with patch("app.main._make_driver", return_value=mock_driver), \
          patch("app.main._svc.get_redis", return_value=mock_redis), \
          patch("app.consumer.run_consumer", new=_noop_consumer()):
@@ -43,8 +41,6 @@ def test_ready_503_redis_down(mock_redis, mock_driver):
 def test_ready_503_neo4j_down(mock_redis):
     bad_driver = MagicMock()
     bad_driver.verify_connectivity.side_effect = Exception("neo4j unavailable")
-    import app.main
-    app.main._svc._dep_checkers = []
     with patch("app.main._make_driver", return_value=bad_driver), \
          patch("app.main._svc.get_redis", return_value=mock_redis), \
          patch("app.consumer.run_consumer", new=_noop_consumer()):
