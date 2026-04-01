@@ -62,6 +62,23 @@ The context doc is plain text — paste it directly before your question in any 
 - Merges static and dynamic signals with provenance tags (static / spec.N% / runtime-only)
 - Serializes the minimum sufficient subgraph for any given query, within a token budget
 
+## What's runnable today
+
+```bash
+make up    # starts all services (Neo4j, Qdrant, Redis, Postgres, Ollama, all pipeline services)
+make demo  # indexes a bundled sample repo and runs an example query (~5 minutes)
+```
+
+| Component | Status |
+|-----------|--------|
+| Static pipeline (repo-watcher → parser → graph-writer → symbol-resolver → embedder → vector-writer) | ✅ Functional |
+| Query pipeline (query-understander → dual-retriever → subgraph-expander → serializer → api-gateway) | ✅ Functional |
+| Dynamic pipeline (entrypoint-discoverer → instrumenter → trace-runner → trace-normalizer → graph-enricher → spec-generator) | ✅ Built, query improvements in progress |
+| Web UI (repo selector, question input, gate question config) | 🔧 In progress |
+| MCP server for Claude Code | 🔧 Planned (next release) |
+
+The static + query pipeline is the dependency used by Breakdown and Fracture. Start with `make up` to get that running.
+
 ## What's built
 
 **Static pipeline** — repo-watcher → parser → graph-writer → symbol-resolver → embedder → vector-writer
@@ -105,7 +122,7 @@ curl -X POST http://localhost:8090/query \
   -d '{"repo": "your-repo", "question": "what are the external connections for data inflows"}'
 ```
 
-## Implementation plan
+## Roadmap
 
 ### Next release — critical
 
