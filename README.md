@@ -107,6 +107,62 @@ curl -X POST http://localhost:8090/query \
   -d '{"repo": "your-repo", "question": "what are the external connections for data inflows"}'
 ```
 
+## Implementation plan
+
+### Next release — critical
+
+**Go trace pipeline hand-off (broken — 0 observed runs)**
+- `go-trace-runner/internal/handlers/run.go` lines 131–136 assembles a valid `RawTrace` via `assembler.Assemble` but never calls `stream.EmitRawTrace`. The trace is discarded silently.
+- `go_client.py` line 101 also emits a `RawTrace` with `events=[]` on the Python fallback path, so even if the Go runner were fixed, the wrapper sends an empty shell. Either remove this path once the Go runner emits directly, or add a status endpoint that returns the assembled events.
+- Fix: wire `stream.EmitRawTrace(trace)` into the run handler after assembly. Confirm `stream:raw-traces` receives events before the normalizer can produce `ExecutionPath` records and populate `behavior_specs`.
+
+**Docker workspace mount**
+- Workspace directory mount is broken — services cannot reach repo files at runtime. Verify volume binds in `docker-compose.yml` and confirm paths match what the parser and trace runner expect.
+
+**Web UI**
+- Build the query interface: repo selector, question input, mode selector, gate question configuration. A reference screenshot is at `docs/images/webui.png`.
+
+**Process monitoring and logging**
+- Structured logging across all six dynamic services and the query pipeline. Log stream consumption, job queue depth, trace assembly, normalizer output, and spec writes. Expose a `/metrics` endpoint per service (already in the service contract — implement it). Goal: make system flow and failure points observable without reading service code.
+
+---
+
+### Second release — quality and packaging
+
+**Retrieval quality: I/O boundary tagging**
+- This is the core structural gap. Semantic queries about runtime behaviour (data inflows, external connections) return lexical noise until the trace pipeline is producing `BehaviorSpec` entries with `SIDE_EFFECTS` blocks. Once the trace fix above lands, confirm that `DB READ`, `HTTP IN`, and `CACHE GET` annotations appear in specs and that the retriever surfaces them over lexically-matched-but-wrong nodes.
+
+**Retrieval quality: query improvements**
+- `buildFullTextQuery` in `neo4j.go:29` produces flat OR across all query terms. Add phrase matching and field weighting so "external connections data inflows" does not match every node that contains the word "external".
+- BFS direction: the query understander classifies "data inflows" as `flow`, which runs BFS forward through CALLS edges. Inflow queries need entry point lookup, not forward traversal. Reclassify or add a `inflow` query type that walks CALLED_BY edges instead.
+- Token budget constants (`tokensSeedWithoutSpec = 120`) are undersized for real functions. Replace with measured estimates or a lightweight token counter.
+
+**Python library: exportable components without refactor**
+- The novel pieces worth packaging standalone are: the spec renderer (`spec-generator/app/renderer.py`), the query understander logic, and the shared Pydantic models. No refactor needed — use symlinks into `src/tersecontext/` and export from `__init__.py`. The Go scorer and BFS are not pip-installable; rewrite the budget logic in Python (~50 lines) if Python users need it.
+
+**MCP server for Claude Code integration**
+- Build an MCP tool `query_codebase` that accepts a natural-language question, calls `POST /query` on the api-gateway, and returns the context document as structured text. Register it at project scope (`.mcp.json`) so Claude Code discovers it automatically and routes codebase questions through TerseContext rather than file crawling.
+- On tool response: translate the context document into human-readable explanation directly in the MCP handler so Claude Code receives a ready-to-use answer, not raw spec format.
+
+**Authentication**
+- Login system for the web UI. Scope: single-tenant token auth is sufficient for first pass.
+
+---
+
+### Future — agent orchestrator
+
+Replace direct query calls with a routing layer:
+- A lightweight orchestrator receives questions and routes to the right tool: TerseContext quick-query (CLI or HTTP) for code questions, other tools for everything else.
+- Tiering: small model for classification and routing, larger model for synthesis. Context window limit passed to the serializer based on the target model's capacity so the budget is set dynamically per call, not hardcoded.
+- The TerseContext query engine becomes a CLI tool the orchestrator shells out to, making it usable from any agent framework without running the full stack.
+
+---
+
+### Optional
+
+- Dynamic context window sizing: pass model name to the serializer; use model-specific token limits rather than a fixed 2000 budget.
+- Mini presentation deck covering the pipeline, the static/dynamic merge, and the retrieval quality story.
+
 ## License
 
 MIT
