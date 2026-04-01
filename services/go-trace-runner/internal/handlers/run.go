@@ -11,9 +11,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 	"github.com/tersecontext/tc/services/go-trace-runner/internal/assembler"
 	"github.com/tersecontext/tc/services/go-trace-runner/internal/collector"
 	"github.com/tersecontext/tc/services/go-trace-runner/internal/executor"
+	"github.com/tersecontext/tc/services/go-trace-runner/internal/stream"
 )
 
 type RunRequest struct {
@@ -39,8 +41,8 @@ type RunStatus struct {
 }
 
 // Run accepts POST /run, validates the request, executes the instrumented
-// binary, collects trace events, and assembles RawTrace.
-func Run(store *sync.Map, sessionsDir string) http.HandlerFunc {
+// binary, collects trace events, assembles RawTrace, and emits it to Redis.
+func Run(store *sync.Map, sessionsDir string, rdb *redis.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req RunRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -132,6 +134,9 @@ func Run(store *sync.Map, sessionsDir string) http.HandlerFunc {
 				for _, ep := range req.Entrypoints {
 					trace := assembler.Assemble(ep.StableID, req.CommitSha, req.Repo, events)
 					status.EventsEmitted += len(trace.Events)
+					if emitErr := stream.EmitRawTrace(context.Background(), rdb, trace); emitErr != nil {
+						log.Printf("stream emit error for %s: %v", ep.StableID, emitErr)
+					}
 				}
 			}
 

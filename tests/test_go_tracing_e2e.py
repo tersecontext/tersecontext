@@ -38,12 +38,12 @@ def test_instrument_gastown(instrumenter):
         "repo": "gastown",
         "repo_path": "/repos/gastown",
         "commit_sha": "HEAD",
-        "entrypoints": ["TestExample"],
+        "entrypoints": ["TestCheckServerReachable_NoServer"],
         "language": "go",
         "boundary_patterns": ["*.Handler*", "db.*"],
         "include_deps": [],
     })
-    assert resp.status_code == 200
+    assert resp.status_code == 200, resp.text
     data = resp.json()
     assert data["session_id"]
-    assert data["instrumented_funcs"] > 0
+    assert data["stats"]["Instrumented"] > 0

@@ -90,7 +90,7 @@ def render_spec(path: ExecutionPath, entrypoint_name: str) -> tuple[str, Confide
         freq_str = f"{item.frequency_ratio:.2f}"
         ms_str = f"~{item.avg_ms:.1f}ms"
         tag = "[dynamic-only]" if item.stable_id in dynamic_only_targets else "[confirmed]"
-        line = f"  {i}.  {item.name}    {freq_str}    {ms_str}    {tag}"
+        line = f"  {i}.  {item.display_name()}    {freq_str}    {ms_str}    {tag}"
         if item.args:
             line += f"    args: {item.args}"
         lines.append(line)

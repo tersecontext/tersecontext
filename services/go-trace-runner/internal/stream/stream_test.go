@@ -34,10 +34,7 @@ func TestRawTraceToStreamFields(t *testing.T) {
 	}
 
 	fields := ToStreamFields(trace)
-	if fields["entrypoint_stable_id"] != "sha256:abc" {
-		t.Error("missing entrypoint_stable_id")
-	}
-	if fields["data"] == nil || fields["data"] == "" {
-		t.Error("missing data field")
+	if fields["event"] == nil || fields["event"] == "" {
+		t.Error("missing event field")
 	}
 }

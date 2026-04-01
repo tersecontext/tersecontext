@@ -6,11 +6,9 @@ import logging
 
 import httpx
 
-from .models import EntrypointJob, TraceEvent, RawTrace
+from .models import EntrypointJob
 
 logger = logging.getLogger(__name__)
-
-STREAM_OUT = "stream:raw-traces"
 
 
 class GoTraceClient:
@@ -91,15 +89,7 @@ class GoTraceClient:
                 logger.error("Go trace failed for %s: %s", job.stable_id, status_data.get("error"))
                 return "error"
 
-            # Emit a minimal RawTrace to the stream so downstream services can process
-            trace = RawTrace(
-                entrypoint_stable_id=job.stable_id,
-                commit_sha=commit_sha,
-                repo=job.repo,
-                duration_ms=float(status_data.get("duration_ms", 0)),
-                events=[],
-            )
-            await r.xadd(STREAM_OUT, {"event": trace.model_dump_json()})
+            # go-trace-runner emits RawTrace directly to stream:raw-traces after assembly
             return "ok"
         except Exception as exc:
             logger.error("Go trace polling failed for %s: %s", job.stable_id, exc)

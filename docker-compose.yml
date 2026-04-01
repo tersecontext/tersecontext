@@ -215,7 +215,9 @@ services:
       retries: 5
 
   graph-enricher:
-    build: ./services/graph-enricher
+    build:
+      context: ./services
+      dockerfile: graph-enricher/Dockerfile
     ports:
       - "8096:8080"
     environment:
@@ -287,7 +289,9 @@ services:
       retries: 5
 
   entrypoint-discoverer:
-    build: ./services/entrypoint-discoverer
+    build:
+      context: ./services
+      dockerfile: entrypoint-discoverer/Dockerfile
     ports:
       - "8092:8080"
     environment:
@@ -313,7 +317,9 @@ services:
       start_period: 15s
 
   instrumenter:
-    build: ./services/instrumenter
+    build:
+      context: ./services
+      dockerfile: instrumenter/Dockerfile
     ports:
       - "8093:8080"
     environment:
@@ -329,7 +335,9 @@ services:
       start_period: 15s
 
   trace-runner:
-    build: ./services/trace-runner
+    build:
+      context: ./services
+      dockerfile: trace-runner/Dockerfile
     ports:
       - "8094:8080"
     volumes:
@@ -498,7 +506,9 @@ services:
       retries: 5
 
   trace-normalizer:
-    build: ./services/trace-normalizer
+    build:
+      context: ./services
+      dockerfile: trace-normalizer/Dockerfile
     ports:
       - "8095:8080"
     environment:
@@ -515,7 +525,9 @@ services:
       - tersecontext
 
   spec-generator:
-    build: ./services/spec-generator
+    build:
+      context: ./services
+      dockerfile: spec-generator/Dockerfile
     ports:
       - "8097:8080"
     environment:
