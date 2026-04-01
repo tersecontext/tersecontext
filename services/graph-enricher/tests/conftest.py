@@ -28,9 +28,12 @@ def _make_noop_consumer():
 
 @pytest.fixture
 def client(mock_redis, mock_driver):
-    with patch("app.main._get_redis", return_value=mock_redis), \
-         patch("app.main._make_driver", return_value=mock_driver), \
+    with patch("app.main._make_driver", return_value=mock_driver), \
+         patch("app.main._svc.get_redis", return_value=mock_redis), \
          patch("app.consumer.run_consumer", new=_make_noop_consumer()):
-        from app.main import app
-        with TestClient(app) as c:
+        import app.main
+        # Reset dep checkers so they don't accumulate across test runs
+        app.main._svc._dep_checkers = []
+        from app.main import app as fastapi_app
+        with TestClient(fastapi_app) as c:
             yield c
