@@ -3,7 +3,7 @@ import uuid as uuid_lib
 
 from fastapi.testclient import TestClient
 
-from app.main import app
+from app.main import app, MAX_SESSIONS
 
 client = TestClient(app)
 
@@ -103,3 +103,24 @@ def test_instrument_all_known_patch_targets_present():
         "builtins.open",
     }
     assert expected.issubset(targets)
+
+
+def test_instrument_returns_limit_in_503_when_sessions_full(monkeypatch):
+    """Error message must include the session limit so operators know the cap."""
+    import app.main as main_mod
+
+    # Fill sessions to the limit with fake entries
+    fake_sessions = {f"fake-{i}": object() for i in range(MAX_SESSIONS)}
+    fake_times = {f"fake-{i}": 0.0 for i in range(MAX_SESSIONS)}
+
+    monkeypatch.setattr("app.main._sessions", fake_sessions)
+    monkeypatch.setattr("app.main._session_created_at", fake_times)
+
+    resp = client.post("/instrument", json={
+        "stable_id": "sha256:fn_test", "file_path": "tests/test.py", "repo": "test"
+    })
+
+    assert resp.status_code == 503
+    error_msg = resp.json()["error"]
+    assert str(MAX_SESSIONS) in error_msg
+    assert "limit" in error_msg.lower()

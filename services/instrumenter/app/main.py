@@ -111,7 +111,7 @@ def instrument(req: InstrumentRequest) -> InstrumentResponse:
     if len(_sessions) >= MAX_SESSIONS:
         return JSONResponse(
             status_code=503,
-            content={"error": "Max concurrent sessions reached"},
+            content={"error": f"Max concurrent sessions reached (limit: {MAX_SESSIONS})"},
         )
 
     session_id = str(uuid.uuid4())
