@@ -67,7 +67,8 @@ def _patched_app(mock_redis, mock_store):
     main_mod._store = original_store
     main_mod.app.router.lifespan_context = original_lifespan
     main_mod._svc._dep_checkers.clear()
-    main_mod._svc._dep_checkers.extend(original_checkers)
+    for checker_fn, dep_name, dep_required in original_checkers:
+        main_mod._svc.add_dep_checker(checker_fn, name=dep_name, required=dep_required)
 
 
 def test_health_returns_ok(client):

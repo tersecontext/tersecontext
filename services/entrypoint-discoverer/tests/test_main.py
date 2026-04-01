@@ -4,6 +4,9 @@ from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
 
 
+# Note: TestClient(app) without context manager does NOT trigger lifespan,
+# so validate_env is never called here. Tests that use `with TestClient(app) as c:`
+# must inject NEO4J_PASSWORD and POSTGRES_DSN via patch.dict to avoid sys.exit(1).
 def _make_client():
     # Patches only needed during import. Safe for /health, /metrics (don't call _get_* at
     # request time) and for 422 validation errors (FastAPI rejects before endpoint body runs).
