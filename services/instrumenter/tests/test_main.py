@@ -107,8 +107,6 @@ def test_instrument_all_known_patch_targets_present():
 
 def test_instrument_returns_limit_in_503_when_sessions_full(monkeypatch):
     """Error message must include the session limit so operators know the cap."""
-    import app.main as main_mod
-
     # Fill sessions to the limit with fake entries
     fake_sessions = {f"fake-{i}": object() for i in range(MAX_SESSIONS)}
     fake_times = {f"fake-{i}": 0.0 for i in range(MAX_SESSIONS)}
