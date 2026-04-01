@@ -19,7 +19,7 @@ _svc = ServiceBase("trace-normalizer", VERSION)
 
 _redis_client: redis_lib.Redis | None = None
 _neo4j_driver = None
-_events_processed: int = 0
+_consumer = None  # NormalizerConsumer | None
 
 
 def _get_redis() -> redis_lib.Redis:
@@ -58,7 +58,7 @@ def _process_message(r, driver, raw_json: str) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _events_processed
+    global _consumer
     from .consumer import NormalizerConsumer
 
     _svc._dep_checkers.clear()  # idempotent restart safety
@@ -84,9 +84,9 @@ async def lifespan(app: FastAPI):
                 return f"neo4j: {exc}"
         _svc.add_dep_checker(check_neo4j)
 
-    consumer = NormalizerConsumer(r_sync, driver)
     redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379")
-    consumer_task = asyncio.create_task(consumer.run(redis_url))
+    _consumer = NormalizerConsumer(r_sync, driver)
+    consumer_task = asyncio.create_task(_consumer.run(redis_url))
     try:
         yield
     finally:
@@ -99,6 +99,7 @@ async def lifespan(app: FastAPI):
             _redis_client.close()
         if _neo4j_driver is not None:
             _neo4j_driver.close()
+        _consumer = None
 
 
 app = FastAPI(lifespan=lifespan)
@@ -110,6 +111,6 @@ def metrics():
     lines = [
         "# HELP trace_normalizer_events_processed_total Total ExecutionPath events emitted",
         "# TYPE trace_normalizer_events_processed_total counter",
-        f"trace_normalizer_events_processed_total {_events_processed}",
+        f"trace_normalizer_events_processed_total {_consumer.events_processed if _consumer else 0}",
     ]
     return PlainTextResponse("\n".join(lines) + "\n")

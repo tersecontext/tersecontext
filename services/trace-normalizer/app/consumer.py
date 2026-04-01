@@ -25,6 +25,7 @@ class NormalizerConsumer(RedisConsumerBase):
         # neo4j_driver: used by reconcile
         self._redis_sync = redis_sync
         self._driver = neo4j_driver
+        self.events_processed: int = 0
 
     async def handle(self, data: dict) -> None:
         raw = data.get(b"event") or data.get("event")
@@ -37,6 +38,7 @@ class NormalizerConsumer(RedisConsumerBase):
         await loop.run_in_executor(
             None, self._process_sync, self._redis_sync, self._driver, raw
         )
+        self.events_processed += 1
 
     @staticmethod
     def _process_sync(r, driver, raw_json: str) -> None:
