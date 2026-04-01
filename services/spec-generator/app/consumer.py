@@ -12,7 +12,6 @@ from app.store import SpecStore
 logger = logging.getLogger(__name__)
 
 messages_processed_total: int = 0
-messages_failed_total: int = 0
 specs_written_total: int = 0
 specs_embedded_total: int = 0
 

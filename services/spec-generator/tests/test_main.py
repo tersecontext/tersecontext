@@ -49,7 +49,7 @@ def _patched_app(mock_redis, mock_store):
     async def check_qdrant() -> str | None:
         try:
             if mock_store:
-                loop = asyncio.get_event_loop()
+                loop = asyncio.get_running_loop()
                 await loop.run_in_executor(None, mock_store._qdrant.get_collections)
             return None
         except Exception as exc:
@@ -121,7 +121,6 @@ def test_metrics_returns_prometheus_format(client):
 
     # Set known counter values
     consumer.messages_processed_total = 42
-    consumer.messages_failed_total = 3
     consumer.specs_written_total = 39
     consumer.specs_embedded_total = 38
 
@@ -133,12 +132,10 @@ def test_metrics_returns_prometheus_format(client):
     assert "# HELP" in text
     assert "# TYPE" in text
     assert "spec_generator_messages_processed_total 42" in text
-    assert "spec_generator_messages_failed_total 3" in text
     assert "spec_generator_specs_written_total 39" in text
     assert "spec_generator_specs_embedded_total 38" in text
 
     # Reset counters
     consumer.messages_processed_total = 0
-    consumer.messages_failed_total = 0
     consumer.specs_written_total = 0
     consumer.specs_embedded_total = 0

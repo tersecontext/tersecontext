@@ -83,7 +83,8 @@ async def lifespan(app: FastAPI):
     _svc.add_dep_checker(check_qdrant)
 
     redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379")
-    task = asyncio.create_task(SpecGeneratorConsumer(_store).run(redis_url))
+    consumer = SpecGeneratorConsumer(_store)
+    task = asyncio.create_task(consumer.run(redis_url))
     try:
         yield
     finally:
@@ -106,9 +107,6 @@ def metrics():
         "# HELP spec_generator_messages_processed_total Total messages processed",
         "# TYPE spec_generator_messages_processed_total counter",
         f"spec_generator_messages_processed_total {_consumer.messages_processed_total}",
-        "# HELP spec_generator_messages_failed_total Total messages failed",
-        "# TYPE spec_generator_messages_failed_total counter",
-        f"spec_generator_messages_failed_total {_consumer.messages_failed_total}",
         "# HELP spec_generator_specs_written_total Total specs written to Postgres",
         "# TYPE spec_generator_specs_written_total counter",
         f"spec_generator_specs_written_total {_consumer.specs_written_total}",

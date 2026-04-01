@@ -75,7 +75,7 @@ def client(mock_redis, mock_store):
     async def check_qdrant() -> str | None:
         try:
             if mock_store:
-                loop = asyncio.get_event_loop()
+                loop = asyncio.get_running_loop()
                 await loop.run_in_executor(None, mock_store._qdrant.get_collections)
             return None
         except Exception as exc:
