@@ -53,7 +53,8 @@ class ServiceBase:
         self.name = name
         self.version = version
         self._redis: aioredis.Redis | None = None
-        self._dep_checkers: list[Callable[[], Awaitable[str | None]]] = []
+        # Each entry: (checker_fn, dep_name, required)
+        self._dep_checkers: list[tuple[Callable[[], Awaitable[str | None]], str, bool]] = []
 
         self.router = APIRouter()
 
@@ -63,21 +64,43 @@ class ServiceBase:
 
         @self.router.get("/ready", name=f"{name}-ready")
         async def ready() -> Any:
-            errors: list[str] = []
-            for checker in self._dep_checkers:
+            dep_results: dict[str, dict] = {}
+            any_required_failed = False
+            any_optional_failed = False
+
+            for checker, dep_name, required in self._dep_checkers:
                 err = await checker()
                 if err:
-                    errors.append(err)
-            if errors:
+                    dep_results[dep_name] = {"status": "error", "error": err, "required": required}
+                    if required:
+                        any_required_failed = True
+                    else:
+                        any_optional_failed = True
+                else:
+                    dep_results[dep_name] = {"status": "ok", "required": required}
+
+            if any_required_failed:
                 return JSONResponse(
                     status_code=503,
-                    content={"status": "unavailable", "errors": errors},
+                    content={"status": "unavailable", "deps": dep_results},
                 )
-            return {"status": "ok"}
+            if any_optional_failed:
+                return {"status": "degraded", "deps": dep_results}
+            return {"status": "ok", "deps": dep_results}
 
-    def add_dep_checker(self, checker: Callable[[], Awaitable[str | None]]) -> None:
-        """Register a dep checker. Return None if OK, an error string if not."""
-        self._dep_checkers.append(checker)
+    def add_dep_checker(
+        self,
+        checker: Callable[[], Awaitable[str | None]],
+        name: str | None = None,
+        required: bool = True,
+    ) -> None:
+        """Register a dep checker. Returns None if OK, an error string if not.
+
+        name defaults to checker.__name__. required=False means failure returns
+        HTTP 200 with status 'degraded' instead of 503 'unavailable'.
+        """
+        dep_name = name if name is not None else checker.__name__
+        self._dep_checkers.append((checker, dep_name, required))
 
     def get_redis(self) -> aioredis.Redis:
         """Return the singleton Redis client, creating it on first call using REDIS_URL."""

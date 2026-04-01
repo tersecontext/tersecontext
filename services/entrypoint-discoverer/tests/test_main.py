@@ -47,7 +47,9 @@ def test_ready_returns_503_when_redis_down():
         with TestClient(app) as client:
             resp = client.get("/ready")
     assert resp.status_code == 503
-    assert any("redis" in e for e in resp.json()["errors"])
+    body = resp.json()
+    assert body["status"] == "unavailable"
+    assert any(v["status"] == "error" for v in body["deps"].values())
 
 
 def test_metrics_returns_prometheus_text():

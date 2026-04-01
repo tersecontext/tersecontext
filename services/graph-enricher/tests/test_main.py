@@ -35,7 +35,7 @@ def test_ready_503_redis_down(mock_redis, mock_driver):
     assert resp.status_code == 503
     body = resp.json()
     assert body["status"] == "unavailable"
-    assert any("redis" in e for e in body["errors"])
+    assert any("redis" in k or "redis" in v.get("error", "") for k, v in body["deps"].items())
 
 
 def test_ready_503_neo4j_down(mock_redis):
@@ -50,7 +50,7 @@ def test_ready_503_neo4j_down(mock_redis):
     assert resp.status_code == 503
     body = resp.json()
     assert body["status"] == "unavailable"
-    assert any("neo4j" in e for e in body["errors"])
+    assert any("neo4j" in k or "neo4j" in v.get("error", "") for k, v in body["deps"].items())
 
 
 def test_metrics_returns_prometheus_format(client):

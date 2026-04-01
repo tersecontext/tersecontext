@@ -23,37 +23,78 @@ def test_health_returns_ok():
     assert resp.json() == {"status": "ok", "service": "my-svc", "version": "1.0.0"}
 
 
-def test_ready_no_checkers_returns_ok():
-    svc = ServiceBase("my-svc", "1.0.0")
-    client = TestClient(_app(svc))
-    resp = client.get("/ready")
-    assert resp.status_code == 200
-    assert resp.json() == {"status": "ok"}
-
-
-def test_ready_failing_checker_returns_503():
+def test_ready_required_dep_failing_returns_503_unavailable():
     svc = ServiceBase("my-svc", "1.0.0")
 
-    async def bad_dep() -> str | None:
+    async def check_redis() -> str | None:
         return "redis: connection refused"
 
-    svc.add_dep_checker(bad_dep)
+    svc.add_dep_checker(check_redis)
     client = TestClient(_app(svc))
     resp = client.get("/ready")
     assert resp.status_code == 503
-    assert "redis" in resp.json()["errors"][0]
+    body = resp.json()
+    assert body["status"] == "unavailable"
+    assert "check_redis" in body["deps"]
+    assert body["deps"]["check_redis"]["status"] == "error"
+    assert body["deps"]["check_redis"]["required"] is True
+    assert "connection refused" in body["deps"]["check_redis"]["error"]
 
 
-def test_ready_passing_checker_returns_ok():
+def test_ready_optional_dep_failing_returns_200_degraded():
     svc = ServiceBase("my-svc", "1.0.0")
 
-    async def good_dep() -> str | None:
-        return None
+    async def check_neo4j() -> str | None:
+        return "neo4j: unreachable"
 
-    svc.add_dep_checker(good_dep)
+    svc.add_dep_checker(check_neo4j, name="neo4j", required=False)
     client = TestClient(_app(svc))
     resp = client.get("/ready")
     assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "degraded"
+    assert body["deps"]["neo4j"]["required"] is False
+    assert body["deps"]["neo4j"]["status"] == "error"
+
+
+def test_ready_custom_name_overrides_function_name():
+    svc = ServiceBase("my-svc", "1.0.0")
+
+    async def check_something() -> str | None:
+        return None
+
+    svc.add_dep_checker(check_something, name="mydb")
+    client = TestClient(_app(svc))
+    resp = client.get("/ready")
+    body = resp.json()
+    assert "mydb" in body["deps"]
+    assert "check_something" not in body["deps"]
+
+
+def test_ready_passing_dep_appears_in_deps_ok():
+    svc = ServiceBase("my-svc", "1.0.0")
+
+    async def check_redis() -> str | None:
+        return None
+
+    svc.add_dep_checker(check_redis)
+    client = TestClient(_app(svc))
+    resp = client.get("/ready")
+    body = resp.json()
+    assert body["status"] == "ok"
+    assert body["deps"]["check_redis"]["status"] == "ok"
+    assert body["deps"]["check_redis"]["required"] is True
+    assert "error" not in body["deps"]["check_redis"]
+
+
+def test_ready_no_checkers_returns_ok_empty_deps():
+    svc = ServiceBase("my-svc", "1.0.0")
+    client = TestClient(_app(svc))
+    resp = client.get("/ready")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "ok"
+    assert body["deps"] == {}
 
 
 class EchoConsumer(RedisConsumerBase):
