@@ -7,25 +7,15 @@ from contextlib import asynccontextmanager
 
 logging.basicConfig(level=logging.INFO)
 
-import redis.asyncio as aioredis
 from fastapi import FastAPI
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.responses import PlainTextResponse
+from shared.service import ServiceBase
 
 logger = logging.getLogger(__name__)
 
 VERSION = "0.1.0"
-SERVICE = "trace-runner"
-
-_redis_client: aioredis.Redis | None = None
+_svc = ServiceBase("trace-runner", VERSION)
 _worker_task: asyncio.Task | None = None
-
-
-def _get_redis() -> aioredis.Redis:
-    global _redis_client
-    if _redis_client is None:
-        url = os.environ.get("REDIS_URL", "redis://localhost:6379")
-        _redis_client = aioredis.from_url(url)
-    return _redis_client
 
 
 async def _start_worker() -> asyncio.Task:
@@ -54,6 +44,16 @@ async def _start_worker() -> asyncio.Task:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _worker_task
+    _svc._dep_checkers.clear()
+
+    async def check_redis() -> str | None:
+        try:
+            await _svc.get_redis().ping()
+            return None
+        except Exception as exc:
+            return f"redis: {exc}"
+
+    _svc.add_dep_checker(check_redis)
     _worker_task = await _start_worker()
     try:
         yield
@@ -64,25 +64,11 @@ async def lifespan(app: FastAPI):
                 await _worker_task
             except asyncio.CancelledError:
                 pass
-        if _redis_client is not None:
-            await _redis_client.aclose()
+        await _svc.close_redis()
 
 
 app = FastAPI(lifespan=lifespan)
-
-
-@app.get("/health")
-def health():
-    return {"status": "ok", "service": SERVICE, "version": VERSION}
-
-
-@app.get("/ready")
-async def ready():
-    try:
-        await _get_redis().ping()
-        return {"status": "ok"}
-    except Exception as exc:
-        return JSONResponse(status_code=503, content={"status": "unavailable", "error": "redis unavailable"})
+app.include_router(_svc.router)
 
 
 @app.get("/metrics")
