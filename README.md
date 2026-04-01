@@ -47,6 +47,8 @@ Token count: 312 / 2000 budget
 
 The context doc is plain text — paste it directly before your question in any LLM prompt.
 
+![Example context output](docs/images/example_context.png)
+
 ## How it works
 
 ![TerseContext pipeline overview](docs/images/overview.svg)
@@ -76,6 +78,12 @@ Go dynamic tracing via go-instrumenter + go-trace-runner (runtime via `tracert` 
 | **Qdrant** | Code embeddings (`nodes` collection) | Spec embeddings (`specs` collection) | Semantic search over embeddings. Finds code relevant to a question even when no keyword matches. |
 | **Postgres** | — | `behavior_specs` table (versioned, queryable) | Structured records with SQL. Specs need joins, history, and UNIQUE constraints — a document store would fight this. |
 | **Redis** | Event streams between services | Job queues + trace event streams | Services communicate through Redis lists (jobs) and streams (events). Fast, ordered, no broker to operate. |
+
+## Web UI
+
+TerseContext ships with a web interface for submitting tasks against indexed repositories. Select a repo, describe the feature or question, choose a questioning mode, and configure which gate questions the system asks before proceeding.
+
+![TerseContext web UI](docs/images/webui.png)
 
 ## Quick start
 
