@@ -44,7 +44,7 @@ async def _start_worker() -> asyncio.Task:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _worker_task
-    _svc._dep_checkers.clear()
+    _svc._dep_checkers.clear()  # idempotent restart safety
 
     async def check_redis() -> str | None:
         try:

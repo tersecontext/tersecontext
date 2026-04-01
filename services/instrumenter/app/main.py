@@ -49,7 +49,7 @@ class RunRequest(BaseModel):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    _svc._dep_checkers.clear()
+    _svc._dep_checkers.clear()  # idempotent restart safety
 
     async def _evict():
         while True:

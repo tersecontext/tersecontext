@@ -1,6 +1,7 @@
 # app/main.py
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -53,17 +54,24 @@ def _get_redis() -> redis_lib.Redis:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    _svc._dep_checkers.clear()
+    _svc._dep_checkers.clear()  # idempotent restart safety
 
     async def check_redis() -> str | None:
         try:
-            _get_redis().ping()
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, _get_redis().ping)
             return None
         except Exception as exc:
             return f"redis: {exc}"
 
     _svc.add_dep_checker(check_redis)
-    yield
+    try:
+        yield
+    finally:
+        global _redis_client
+        if _redis_client is not None:
+            _redis_client.close()
+            _redis_client = None
 
 
 app = FastAPI(lifespan=lifespan)
