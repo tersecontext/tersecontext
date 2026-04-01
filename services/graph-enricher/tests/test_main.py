@@ -67,3 +67,32 @@ def test_metrics_returns_prometheus_format(client):
     # Verify Prometheus format: has TYPE and HELP lines
     assert "# TYPE" in text
     assert "# HELP" in text
+
+
+def test_metrics_returns_live_values(mock_redis, mock_driver):
+    """Metrics endpoint reads live counter values from _consumer."""
+    from app.consumer import GraphEnricherConsumer
+    import app.main as main_mod
+
+    with patch("app.main._make_driver", return_value=mock_driver), \
+         patch("app.main._svc.get_redis", return_value=mock_redis), \
+         patch("app.consumer.run_consumer", new=_noop_consumer()), \
+         patch.dict("os.environ", {"NEO4J_PASSWORD": "test"}):
+        from app.main import app as fastapi_app
+        with TestClient(fastapi_app) as c:
+            # Inject counters into the live _consumer set by lifespan
+            assert main_mod._consumer is not None
+            main_mod._consumer.messages_processed = 5
+            main_mod._consumer.nodes_enriched = 12
+            main_mod._consumer.batches_failed = 1
+            main_mod._consumer.dynamic_edges_written = 8
+            main_mod._consumer.confirmed_edges_written = 3
+            resp = c.get("/metrics")
+
+    assert resp.status_code == 200
+    text = resp.text
+    assert "graph_enricher_messages_processed_total 5" in text
+    assert "graph_enricher_nodes_enriched_total 12" in text
+    assert "graph_enricher_messages_failed_total 1" in text
+    assert "graph_enricher_dynamic_edges_total 8" in text
+    assert "graph_enricher_confirmed_edges_total 3" in text

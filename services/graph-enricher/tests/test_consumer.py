@@ -405,3 +405,72 @@ async def test_consumer_batches_neo4j_writes():
     assert consumer._batch_node_records == []
     assert consumer._batch_dynamic_edges == []
     assert consumer._batch_observed_ids == []
+
+
+@pytest.mark.asyncio
+async def test_consumer_increments_messages_processed_on_valid_event():
+    """messages_processed increments once per successfully validated message."""
+    driver = _make_driver()
+    consumer = GraphEnricherConsumer(driver)
+    assert consumer.messages_processed == 0
+
+    event = _make_execution_path()
+    data = {"event": event.model_dump_json().encode()}
+
+    with patch("app.consumer.enricher"):
+        await consumer.handle(data)
+
+    assert consumer.messages_processed == 1
+
+
+@pytest.mark.asyncio
+async def test_consumer_does_not_increment_messages_processed_on_invalid_json():
+    """messages_processed does NOT increment when event JSON is invalid."""
+    driver = _make_driver()
+    consumer = GraphEnricherConsumer(driver)
+
+    data = {"event": b"not-valid-json"}
+    with pytest.raises(ValueError):
+        await consumer.handle(data)
+
+    assert consumer.messages_processed == 0
+
+
+@pytest.mark.asyncio
+async def test_consumer_increments_counters_on_successful_post_batch():
+    """nodes_enriched, dynamic_edges_written, confirmed_edges_written increment on success."""
+    driver = _make_driver()
+    consumer = GraphEnricherConsumer(driver)
+
+    event = _make_execution_path()
+    data = {"event": event.model_dump_json().encode()}
+
+    with patch("app.consumer.enricher"):
+        await consumer.handle(data)
+        node_count = len(consumer._batch_node_records)
+        dynamic_count = len(consumer._batch_dynamic_edges)
+        observed_count = len(consumer._batch_observed_ids)
+        await consumer.post_batch()
+
+    assert consumer.nodes_enriched == node_count
+    assert consumer.dynamic_edges_written == dynamic_count
+    assert consumer.confirmed_edges_written == observed_count
+    assert consumer.batches_failed == 0
+
+
+@pytest.mark.asyncio
+async def test_consumer_increments_batches_failed_on_neo4j_error():
+    """batches_failed increments once per failed batch, not per message."""
+    driver = _make_driver()
+    consumer = GraphEnricherConsumer(driver)
+
+    event = _make_execution_path()
+    data = {"event": event.model_dump_json().encode()}
+
+    with patch("app.consumer.enricher") as mock_enricher:
+        mock_enricher.update_node_props_batch.side_effect = Exception("Neo4j timeout")
+        await consumer.handle(data)
+        await consumer.post_batch()
+
+    assert consumer.batches_failed == 1
+    assert consumer.nodes_enriched == 0  # did not succeed

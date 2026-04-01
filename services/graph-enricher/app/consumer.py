@@ -53,6 +53,11 @@ class GraphEnricherConsumer(RedisConsumerBase):
         self._batch_node_records: list[dict] = []
         self._batch_dynamic_edges: list[dict] = []
         self._batch_observed_ids: list[str] = []
+        self.messages_processed: int = 0
+        self.batches_failed: int = 0
+        self.nodes_enriched: int = 0
+        self.dynamic_edges_written: int = 0
+        self.confirmed_edges_written: int = 0
 
     async def handle(self, data: dict) -> None:
         raw = data.get(b"event") or data.get("event")
@@ -64,6 +69,7 @@ class GraphEnricherConsumer(RedisConsumerBase):
             event = ExecutionPath.model_validate_json(raw)
         except ValidationError as exc:
             raise ValueError(f"invalid ExecutionPath JSON: {exc}") from exc
+        self.messages_processed += 1
         node_records, dynamic_edges, observed_ids = _extract_records(event)
         self._batch_node_records.extend(node_records)
         self._batch_dynamic_edges.extend(dynamic_edges)
@@ -85,8 +91,12 @@ class GraphEnricherConsumer(RedisConsumerBase):
             )
             await loop.run_in_executor(None, enricher.run_conflict_detector, self._driver)
             await loop.run_in_executor(None, enricher.run_staleness_downgrade, self._driver)
+            self.nodes_enriched += len(self._batch_node_records)
+            self.dynamic_edges_written += len(self._batch_dynamic_edges)
+            self.confirmed_edges_written += len(self._batch_observed_ids)
         except Exception as exc:
             logger.error("Batch Neo4j write failed: %s", exc)
+            self.batches_failed += 1
         finally:
             self._batch_node_records.clear()
             self._batch_dynamic_edges.clear()
