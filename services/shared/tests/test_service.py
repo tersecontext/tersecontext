@@ -97,6 +97,23 @@ def test_ready_no_checkers_returns_ok_empty_deps():
     assert body["deps"] == {}
 
 
+def test_ready_required_and_optional_both_failing_returns_503():
+    svc = ServiceBase("my-svc", "1.0.0")
+
+    async def check_required() -> str | None:
+        return "db: down"
+
+    async def check_optional() -> str | None:
+        return "cache: down"
+
+    svc.add_dep_checker(check_required, name="db", required=True)
+    svc.add_dep_checker(check_optional, name="cache", required=False)
+    client = TestClient(_app(svc))
+    resp = client.get("/ready")
+    assert resp.status_code == 503
+    assert resp.json()["status"] == "unavailable"
+
+
 class EchoConsumer(RedisConsumerBase):
     stream = "stream:test"
     group = "test-group"
