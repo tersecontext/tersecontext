@@ -360,7 +360,6 @@ services:
       GO_INSTRUMENTER_URL: http://go-instrumenter:8098
       GO_TRACE_RUNNER_URL: http://go-trace-runner:8099
       COMMIT_SHA: unknown
-      REPOS: "gastown"
     depends_on:
       redis:
         condition: service_healthy
