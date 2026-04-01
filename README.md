@@ -97,9 +97,7 @@ make up                       # start all services
 make demo                     # see it working against a bundled sample repo in ~5 minutes
 
 # Or index your own repo
-curl -X POST http://localhost:8091/install-hook \
-  -H 'Content-Type: application/json' \
-  -d '{"repo_path": "/path/to/your/repo"}'
+make install-hook REPO=/path/to/your/repo
 
 # Then query it
 curl -X POST http://localhost:8090/query \
@@ -110,14 +108,6 @@ curl -X POST http://localhost:8090/query \
 ## Implementation plan
 
 ### Next release — critical
-
-**Go trace pipeline hand-off (broken — 0 observed runs)**
-- `go-trace-runner/internal/handlers/run.go` lines 131–136 assembles a valid `RawTrace` via `assembler.Assemble` but never calls `stream.EmitRawTrace`. The trace is discarded silently.
-- `go_client.py` line 101 also emits a `RawTrace` with `events=[]` on the Python fallback path, so even if the Go runner were fixed, the wrapper sends an empty shell. Either remove this path once the Go runner emits directly, or add a status endpoint that returns the assembled events.
-- Fix: wire `stream.EmitRawTrace(trace)` into the run handler after assembly. Confirm `stream:raw-traces` receives events before the normalizer can produce `ExecutionPath` records and populate `behavior_specs`.
-
-**Docker workspace mount**
-- Workspace directory mount is broken — services cannot reach repo files at runtime. Verify volume binds in `docker-compose.yml` and confirm paths match what the parser and trace runner expect.
 
 **Web UI**
 - Build the query interface: repo selector, question input, mode selector, gate question configuration. A reference screenshot is at `docs/images/webui.png`.

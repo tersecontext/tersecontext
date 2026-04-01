@@ -387,7 +387,7 @@ services:
     networks:
       - tersecontext
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:8088/health"]
+      test: ["CMD", "wget", "-qO-", "http://localhost:8087/health"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -412,7 +412,7 @@ services:
     networks:
       - tersecontext
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:8089/health"]
+      test: ["CMD", "wget", "-qO-", "http://localhost:8088/health"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -424,7 +424,7 @@ services:
     networks:
       - tersecontext
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:8090/health"]
+      test: ["CMD", "wget", "-qO-", "http://localhost:8089/health"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -523,6 +523,11 @@ services:
         condition: service_healthy
     networks:
       - tersecontext
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   spec-generator:
     build:
