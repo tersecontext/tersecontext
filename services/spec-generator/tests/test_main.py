@@ -1,3 +1,4 @@
+import asyncio
 import os
 from contextlib import asynccontextmanager, contextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -12,22 +13,59 @@ async def _noop_lifespan(app):
 
 @contextmanager
 def _patched_app(mock_redis, mock_store):
-    """Context manager that patches the FastAPI app for testing with custom mocks."""
+    """Context manager that patches the FastAPI app for testing with custom mocks.
+
+    Injects dep_checkers that mirror the closures built in lifespan, but use
+    mock_redis / mock_store so the /ready endpoint can return 503 on failures.
+    """
     from fastapi.testclient import TestClient
     import app.main as main_mod
 
     original_store = main_mod._store
     original_lifespan = main_mod.app.router.lifespan_context
+    original_checkers = list(main_mod._svc._dep_checkers)
 
     main_mod._store = mock_store
     main_mod.app.router.lifespan_context = _noop_lifespan
 
-    with patch("app.main._get_redis", return_value=mock_redis):
+    # Build the same dep_checkers that lifespan() would register, using mocks
+    async def check_redis() -> str | None:
+        try:
+            await mock_redis.ping()
+            return None
+        except Exception as exc:
+            return f"redis: {exc}"
+
+    async def check_postgres() -> str | None:
+        try:
+            if mock_store:
+                pool = await mock_store._get_pool()
+                async with pool.acquire() as conn:
+                    await conn.fetchval("SELECT 1")
+            return None
+        except Exception as exc:
+            return f"postgres: {exc}"
+
+    async def check_qdrant() -> str | None:
+        try:
+            if mock_store:
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(None, mock_store._qdrant.get_collections)
+            return None
+        except Exception as exc:
+            return f"qdrant: {exc}"
+
+    main_mod._svc._dep_checkers.clear()
+    main_mod._svc._dep_checkers.extend([check_redis, check_postgres, check_qdrant])
+
+    with patch.object(main_mod._svc, "get_redis", return_value=mock_redis):
         with TestClient(main_mod.app) as c:
             yield c
 
     main_mod._store = original_store
     main_mod.app.router.lifespan_context = original_lifespan
+    main_mod._svc._dep_checkers.clear()
+    main_mod._svc._dep_checkers.extend(original_checkers)
 
 
 def test_health_returns_ok(client):

@@ -1,3 +1,4 @@
+import asyncio
 import os
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -48,14 +49,47 @@ def client(mock_redis, mock_store):
 
     original_store = main_mod._store
     original_lifespan = main_mod.app.router.lifespan_context
+    original_checkers = list(main_mod._svc._dep_checkers)
 
     main_mod._store = mock_store
     main_mod.app.router.lifespan_context = _noop_lifespan
 
-    with patch("app.main._get_redis", return_value=mock_redis):
+    # Inject dep_checkers that use the mock_redis/mock_store so /ready works
+    async def check_redis() -> str | None:
+        try:
+            await mock_redis.ping()
+            return None
+        except Exception as exc:
+            return f"redis: {exc}"
+
+    async def check_postgres() -> str | None:
+        try:
+            if mock_store:
+                pool = await mock_store._get_pool()
+                async with pool.acquire() as conn:
+                    await conn.fetchval("SELECT 1")
+            return None
+        except Exception as exc:
+            return f"postgres: {exc}"
+
+    async def check_qdrant() -> str | None:
+        try:
+            if mock_store:
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(None, mock_store._qdrant.get_collections)
+            return None
+        except Exception as exc:
+            return f"qdrant: {exc}"
+
+    main_mod._svc._dep_checkers.clear()
+    main_mod._svc._dep_checkers.extend([check_redis, check_postgres, check_qdrant])
+
+    with patch.object(main_mod._svc, "get_redis", return_value=mock_redis):
         from fastapi.testclient import TestClient
         with TestClient(main_mod.app) as c:
             yield c
 
     main_mod._store = original_store
     main_mod.app.router.lifespan_context = original_lifespan
+    main_mod._svc._dep_checkers.clear()
+    main_mod._svc._dep_checkers.extend(original_checkers)
