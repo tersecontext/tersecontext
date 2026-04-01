@@ -3,6 +3,18 @@ networks:
     driver: bridge
 
 volumes:
+  prometheus_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./data/prometheus
+  grafana_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./data/grafana
   neo4j_data:
     driver: local
     driver_opts:
@@ -180,7 +192,7 @@ services:
       REDIS_URL: redis://redis:6379
       REPO_ROOT: /repos
     volumes:
-      - ~/.tersecontext/repos:/repos:ro
+      - ${REPOS_DIR:-~/.tersecontext/repos}:/repos:ro
     depends_on:
       redis:
         condition: service_healthy
@@ -276,7 +288,7 @@ services:
       WATCHER_URL: http://localhost:8091
       ALLOWED_REPO_ROOTS: /repos
     volumes:
-      - ~/.tersecontext/repos:/repos:ro
+      - ${REPOS_DIR:-~/.tersecontext/repos}:/repos:ro
     depends_on:
       redis:
         condition: service_healthy
@@ -341,7 +353,7 @@ services:
     ports:
       - "8094:8080"
     volumes:
-      - ~/.tersecontext/repos:/repos:ro
+      - ${REPOS_DIR:-~/.tersecontext/repos}:/repos:ro
     environment:
       REDIS_URL: redis://redis:6379
       INSTRUMENTER_URL: http://instrumenter:8080
@@ -424,7 +436,7 @@ services:
     networks:
       - tersecontext
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:8089/health"]
+      test: ["CMD", "wget", "-qO-", "http://localhost:8090/health"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -462,7 +474,7 @@ services:
     ports:
       - "8098:8098"
     volumes:
-      - ~/.tersecontext/repos:/repos:ro
+      - ${REPOS_DIR:-~/.tersecontext/repos}:/repos:ro
       - /tmp/go-trace-sessions:/tmp/sessions
       - ./services/tracert:/app/tracert:ro
     environment:
@@ -579,6 +591,29 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./docker/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    networks:
+      - tersecontext
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-localpassword}
+    volumes:
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    networks:
+      - tersecontext
 
   # One-shot init: waits for Neo4j to be healthy then applies constraints/indexes.
   # Exits 0 on success; docker-compose marks it as exited (not a failure).

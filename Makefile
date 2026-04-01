@@ -1,4 +1,4 @@
-.PHONY: up down proto verify logs ps demo-up demo link-repos install-hook
+.PHONY: up down proto verify logs ps demo-up demo link-repos install-hook add-repo
 
 # ── Infrastructure ─────────────────────────────────────────────────────────────
 
@@ -73,6 +73,12 @@ demo: demo-up
 
 link-repos:
 	@bash scripts/link-repos.sh
+
+# Add a repo in one step: appends to repos.conf, syncs links, installs git hook.
+# Usage: make add-repo REPO=~/workspaces/myapp
+add-repo:
+	@test -n "$(REPO)" || (echo "Usage: make add-repo REPO=<path>" && exit 1)
+	@bash scripts/add-repo.sh "$(REPO)"
 
 # Install a post-commit git hook in a repo so the watcher is notified on commits.
 # Usage: make install-hook REPO=gastown
