@@ -4,9 +4,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import re
-import shlex
-import stat
 import subprocess
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -15,7 +12,7 @@ import redis as redis_lib
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse, PlainTextResponse
 
-from .models import HookRequest, IndexRequest, InstallHookRequest
+from .models import HookRequest, IndexRequest
 from .watcher import _get_last_sha, _repo_name, _set_last_sha, process_commit, run_watcher
 
 logger = logging.getLogger(__name__)
@@ -147,27 +144,3 @@ def status(repo_path: str = ""):
         "pending": False,
     }
 
-
-@app.post("/install-hook")
-def install_hook(req: InstallHookRequest):
-    hook_dir = os.path.join(req.repo_path, ".git", "hooks")
-    if not os.path.isdir(hook_dir):
-        raise HTTPException(status_code=400, detail="Not a git repository")
-
-    watcher_url = os.environ.get("WATCHER_URL", "http://localhost:8091")
-    if not re.fullmatch(r"https?://[A-Za-z0-9._:/-]+", watcher_url):
-        raise HTTPException(status_code=500, detail="WATCHER_URL contains invalid characters")
-    safe_url = shlex.quote(watcher_url)
-    hook_path = os.path.join(hook_dir, "post-commit")
-    hook_script = (
-        "#!/bin/bash\n"
-        f'curl -s -X POST {safe_url}/hook \\\n'
-        '  -H \'Content-Type: application/json\' \\\n'
-        '  -d "{\\"repo_path\\": \\"$(pwd)\\", \\"commit_sha\\": \\"$(git rev-parse HEAD)\\"}"'
-        "\n"
-    )
-    with open(hook_path, "w") as f:
-        f.write(hook_script)
-    current_mode = os.stat(hook_path).st_mode
-    os.chmod(hook_path, current_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-    return {"installed": True, "hook_path": hook_path}

@@ -1,0 +1,14 @@
+# docker-compose.demo.yml — adds the bundled demo repo to the volume mounts.
+# Usage: docker compose -f docker-compose.yml -f docker-compose.demo.yml up -d
+services:
+  parser:
+    volumes:
+      - ./demo/sample_repo:/repos/demo-repo:ro
+
+  trace-runner:
+    volumes:
+      - ./demo/sample_repo:/repos/demo-repo:ro
+
+  repo-watcher:
+    volumes:
+      - ./demo/sample_repo:/repos/demo-repo

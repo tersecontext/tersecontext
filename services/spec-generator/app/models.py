@@ -5,12 +5,15 @@ from pydantic import BaseModel, ConfigDict
 
 class CallSequenceItem(BaseModel):
     stable_id: str
-    name: str
-    qualified_name: str
+    name: Optional[str] = None
+    qualified_name: Optional[str] = None
     hop: int
     frequency_ratio: float
     avg_ms: float
     args: Optional[str] = None
+
+    def display_name(self) -> str:
+        return self.qualified_name or self.name or self.stable_id
 
 
 class SideEffect(BaseModel):

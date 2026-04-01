@@ -1,4 +1,4 @@
-.PHONY: up down proto verify logs
+.PHONY: up down proto verify logs ps demo-up demo link-repos install-hook
 
 # ── Infrastructure ─────────────────────────────────────────────────────────────
 
@@ -59,3 +59,25 @@ verify:
 
 ps:
 	docker compose ps
+
+# ── Demo ────────────────────────────────────────────────────────────────────────
+
+demo-up:
+	mkdir -p data/neo4j data/qdrant data/redis data/postgres data/ollama
+	docker compose -f docker-compose.yml -f docker-compose.demo.yml up -d
+
+demo: demo-up
+	@bash scripts/demo.sh
+
+# ── Repo management ─────────────────────────────────────────────────────────────
+
+link-repos:
+	@bash scripts/link-repos.sh
+
+# Install a post-commit git hook in a repo so the watcher is notified on commits.
+# Usage: make install-hook REPO=gastown
+#        make install-hook REPO=/absolute/path/to/repo
+#        WATCHER_URL=http://myhost:8091 make install-hook REPO=gastown
+install-hook:
+	@test -n "$(REPO)" || (echo "Usage: make install-hook REPO=<name|path>" && exit 1)
+	@bash scripts/install-hook.sh "$(REPO)"

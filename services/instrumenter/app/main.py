@@ -12,12 +12,13 @@ import sys
 import tempfile
 import time
 import uuid
-from contextlib import ExitStack
+from contextlib import ExitStack, asynccontextmanager
 from unittest.mock import patch
 
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse, PlainTextResponse
 from pydantic import BaseModel
+from shared.service import ServiceBase
 
 from .config import DEFAULT_CAPTURE_ARGS, PATCH_CATALOG
 from .mocking import create_mock_patches
@@ -32,7 +33,7 @@ from .trace import (
 logger = logging.getLogger(__name__)
 
 VERSION = "0.1.0"
-SERVICE = "instrumenter"
+_svc = ServiceBase("instrumenter", VERSION)
 
 MAX_SESSIONS = 100
 
@@ -41,21 +42,44 @@ _runs_completed: int = 0
 _sessions: dict[str, TraceSession] = {}
 _session_created_at: dict[str, float] = {}
 
-app = FastAPI()
-
 
 class RunRequest(BaseModel):
     session_id: str
 
 
-@app.get("/health")
-def health():
-    return {"status": "ok", "service": SERVICE, "version": VERSION}
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    _svc._dep_checkers.clear()  # idempotent restart safety
+
+    async def _evict():
+        while True:
+            await asyncio.sleep(30)
+            now = time.monotonic()
+            expired = [
+                sid
+                for sid, created in _session_created_at.items()
+                if now - created > 60
+            ]
+            for sid in expired:
+                session = _sessions.pop(sid, None)
+                _session_created_at.pop(sid, None)
+                if session:
+                    shutil.rmtree(session.tempdir, ignore_errors=True)
+                logger.info("Evicted stale session %s", sid)
+
+    eviction_task = asyncio.create_task(_evict())
+    try:
+        yield
+    finally:
+        eviction_task.cancel()
+        try:
+            await eviction_task
+        except asyncio.CancelledError:
+            pass
 
 
-@app.get("/ready")
-def ready():
-    return {"status": "ok"}
+app = FastAPI(lifespan=lifespan)
+app.include_router(_svc.router)
 
 
 @app.get("/metrics")
@@ -212,24 +236,3 @@ def run(req: RunRequest):
     _runs_completed += 1
 
     return {"events": events, "duration_ms": round(duration_ms, 3)}
-
-
-@app.on_event("startup")
-async def _start_eviction_loop():
-    async def _evict():
-        while True:
-            await asyncio.sleep(30)
-            now = time.monotonic()
-            expired = [
-                sid
-                for sid, created in _session_created_at.items()
-                if now - created > 60
-            ]
-            for sid in expired:
-                session = _sessions.pop(sid, None)
-                _session_created_at.pop(sid, None)
-                if session:
-                    shutil.rmtree(session.tempdir, ignore_errors=True)
-                logger.info("Evicted stale session %s", sid)
-
-    asyncio.create_task(_evict())

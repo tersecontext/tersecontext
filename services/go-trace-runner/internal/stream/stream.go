@@ -26,10 +26,7 @@ func CacheKey(commitSha, stableID string) string {
 func ToStreamFields(trace assembler.RawTrace) map[string]interface{} {
 	data, _ := json.Marshal(trace)
 	return map[string]interface{}{
-		"entrypoint_stable_id": trace.EntrypointStableID,
-		"repo":                 trace.Repo,
-		"commit_sha":           trace.CommitSha,
-		"data":                 string(data),
+		"event": string(data),
 	}
 }
 

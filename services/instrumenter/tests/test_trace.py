@@ -1,5 +1,59 @@
+import os
+import sysconfig
+import tempfile
+
 import pytest
 from app.trace import create_trace_func, TraceSession
+
+
+def _make_session():
+    td = tempfile.mkdtemp()
+    return TraceSession(
+        session_id="test-001",
+        file_path="test_module.py",
+        repo="test",
+        stable_id="sha256:fn_test",
+        tempdir=td,
+    )
+
+
+def test_stdlib_frames_are_excluded():
+    """Frames from stdlib should return None (subtree pruning), not trace_func."""
+    session = _make_session()
+    trace_func = create_trace_func(session)
+
+    stdlib_prefix = sysconfig.get_path("stdlib")
+    stdlib_file = os.path.join(stdlib_prefix, "importlib", "__init__.py")
+
+    class FakeFrame:
+        class f_code:
+            co_filename = stdlib_file
+            co_name = "something"
+            co_firstlineno = 1
+        f_lineno = 1
+        f_locals = {}
+
+    result = trace_func(FakeFrame(), "call", None)
+    assert result is None, f"Expected None for stdlib frame, got {result!r}"
+    assert len(session.events) == 0, "No events should be emitted for stdlib frames"
+
+
+def test_user_code_frames_are_traced():
+    """Frames from user code should return trace_func (continue tracing)."""
+    session = _make_session()
+    trace_func = create_trace_func(session)
+
+    class FakeFrame:
+        class f_code:
+            co_filename = "/repos/myproject/app/auth.py"
+            co_name = "authenticate"
+            co_firstlineno = 10
+        f_lineno = 10
+        f_locals = {}
+
+    result = trace_func(FakeFrame(), "call", None)
+    assert result is trace_func
+    assert len(session.events) == 1
 
 
 def test_trace_func_captures_call_return():

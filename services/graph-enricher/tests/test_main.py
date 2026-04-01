@@ -26,11 +26,11 @@ def test_ready_ok(client):
 
 def test_ready_503_redis_down(mock_redis, mock_driver):
     mock_redis.ping.side_effect = Exception("connection refused")
-    with patch("app.main._get_redis", return_value=mock_redis), \
-         patch("app.main._make_driver", return_value=mock_driver), \
+    with patch("app.main._make_driver", return_value=mock_driver), \
+         patch("app.main._svc.get_redis", return_value=mock_redis), \
          patch("app.consumer.run_consumer", new=_noop_consumer()):
-        from app.main import app
-        with TestClient(app) as c:
+        from app.main import app as fastapi_app
+        with TestClient(fastapi_app) as c:
             resp = c.get("/ready")
     assert resp.status_code == 503
     body = resp.json()
@@ -41,11 +41,11 @@ def test_ready_503_redis_down(mock_redis, mock_driver):
 def test_ready_503_neo4j_down(mock_redis):
     bad_driver = MagicMock()
     bad_driver.verify_connectivity.side_effect = Exception("neo4j unavailable")
-    with patch("app.main._get_redis", return_value=mock_redis), \
-         patch("app.main._make_driver", return_value=bad_driver), \
+    with patch("app.main._make_driver", return_value=bad_driver), \
+         patch("app.main._svc.get_redis", return_value=mock_redis), \
          patch("app.consumer.run_consumer", new=_noop_consumer()):
-        from app.main import app
-        with TestClient(app) as c:
+        from app.main import app as fastapi_app
+        with TestClient(fastapi_app) as c:
             resp = c.get("/ready")
     assert resp.status_code == 503
     body = resp.json()

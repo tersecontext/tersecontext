@@ -289,10 +289,10 @@ from app.main import app as fastapi_app
 
 @pytest.fixture(autouse=True)
 def reset_redis_client():
-    """Reset module-level redis singleton between tests to avoid state leakage."""
-    original = main_module._redis_client
+    """Reset ServiceBase redis singleton between tests to avoid state leakage."""
+    original = main_module._svc._redis
     yield
-    main_module._redis_client = original
+    main_module._svc._redis = original
 
 
 def test_health_returns_200():
@@ -310,11 +310,10 @@ def test_health_returns_200():
 def test_ready_returns_503_when_redis_down():
     from fastapi.testclient import TestClient
     from unittest.mock import patch, AsyncMock
+    mock_r = AsyncMock()
+    mock_r.ping.side_effect = Exception("connection refused")
     with patch("app.main._start_worker", new=AsyncMock(return_value=None)):
-        with patch("app.main._get_redis") as mock_get_redis:
-            mock_r = AsyncMock()
-            mock_r.ping.side_effect = Exception("connection refused")
-            mock_get_redis.return_value = mock_r
+        with patch.object(main_module._svc, "get_redis", return_value=mock_r):
             with TestClient(fastapi_app) as client:
                 resp = client.get("/ready")
     assert resp.status_code == 503

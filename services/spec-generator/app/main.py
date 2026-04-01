@@ -1,30 +1,22 @@
+# services/spec-generator/app/main.py
+from __future__ import annotations
+
 import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
 
-import asyncpg
-import redis.asyncio as aioredis
 from fastapi import FastAPI
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.responses import PlainTextResponse
+from shared.service import ServiceBase
 
 from . import consumer as _consumer
 
 logger = logging.getLogger(__name__)
 
 VERSION = "0.1.0"
-SERVICE = "spec-generator"
-
-_redis_client: aioredis.Redis | None = None
+_svc = ServiceBase("spec-generator", VERSION)
 _store = None
-
-
-def _get_redis() -> aioredis.Redis:
-    global _redis_client
-    if _redis_client is None:
-        url = os.environ.get("REDIS_URL", "redis://localhost:6379")
-        _redis_client = aioredis.from_url(url)
-    return _redis_client
 
 
 def _make_provider():
@@ -46,9 +38,10 @@ def _get_embedding_dim() -> int:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _store
-
     from app.store import SpecStore
-    from app.consumer import run_consumer
+    from app.consumer import SpecGeneratorConsumer
+
+    _svc._dep_checkers.clear()  # idempotent restart safety
 
     provider = _make_provider()
     postgres_dsn = os.environ["POSTGRES_DSN"]
@@ -59,7 +52,39 @@ async def lifespan(app: FastAPI):
     await _store.ensure_schema()
     await _store.ensure_collection()
 
-    task = asyncio.create_task(run_consumer(_store))
+    async def check_redis() -> str | None:
+        try:
+            await _svc.get_redis().ping()
+            return None
+        except Exception as exc:
+            return f"redis: {exc}"
+
+    async def check_postgres() -> str | None:
+        try:
+            if _store:
+                pool = await _store._get_pool()
+                async with pool.acquire() as conn:
+                    await conn.fetchval("SELECT 1")
+            return None
+        except Exception as exc:
+            return f"postgres: {exc}"
+
+    async def check_qdrant() -> str | None:
+        try:
+            if _store:
+                loop = asyncio.get_running_loop()
+                await loop.run_in_executor(None, _store._qdrant.get_collections)
+            return None
+        except Exception as exc:
+            return f"qdrant: {exc}"
+
+    _svc.add_dep_checker(check_redis)
+    _svc.add_dep_checker(check_postgres)
+    _svc.add_dep_checker(check_qdrant)
+
+    redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379")
+    consumer = SpecGeneratorConsumer(_store)
+    task = asyncio.create_task(consumer.run(redis_url))
     try:
         yield
     finally:
@@ -69,39 +94,11 @@ async def lifespan(app: FastAPI):
         except asyncio.CancelledError:
             pass
         await _store.close()
+        await _svc.close_redis()
 
 
 app = FastAPI(lifespan=lifespan)
-
-
-@app.get("/health")
-def health():
-    return {"status": "ok", "service": SERVICE, "version": VERSION}
-
-
-@app.get("/ready")
-async def ready():
-    errors = []
-    try:
-        await _get_redis().ping()
-    except Exception as exc:
-        errors.append(f"redis: {exc}")
-    try:
-        if _store:
-            pool = await _store._get_pool()
-            async with pool.acquire() as conn:
-                await conn.fetchval("SELECT 1")
-    except Exception as exc:
-        errors.append(f"postgres: {exc}")
-    try:
-        if _store:
-            loop = asyncio.get_running_loop()
-            await loop.run_in_executor(None, _store._qdrant.get_collections)
-    except Exception as exc:
-        errors.append(f"qdrant: {exc}")
-    if errors:
-        return JSONResponse(status_code=503, content={"status": "unavailable", "errors": errors})
-    return {"status": "ok"}
+app.include_router(_svc.router)  # registers /health and /ready
 
 
 @app.get("/metrics")
@@ -110,9 +107,6 @@ def metrics():
         "# HELP spec_generator_messages_processed_total Total messages processed",
         "# TYPE spec_generator_messages_processed_total counter",
         f"spec_generator_messages_processed_total {_consumer.messages_processed_total}",
-        "# HELP spec_generator_messages_failed_total Total messages failed",
-        "# TYPE spec_generator_messages_failed_total counter",
-        f"spec_generator_messages_failed_total {_consumer.messages_failed_total}",
         "# HELP spec_generator_specs_written_total Total specs written to Postgres",
         "# TYPE spec_generator_specs_written_total counter",
         f"spec_generator_specs_written_total {_consumer.specs_written_total}",

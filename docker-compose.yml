@@ -180,7 +180,7 @@ services:
       REDIS_URL: redis://redis:6379
       REPO_ROOT: /repos
     volumes:
-      - ~/workspaces:/repos:ro
+      - ~/.tersecontext/repos:/repos:ro
     depends_on:
       redis:
         condition: service_healthy
@@ -215,7 +215,9 @@ services:
       retries: 5
 
   graph-enricher:
-    build: ./services/graph-enricher
+    build:
+      context: ./services
+      dockerfile: graph-enricher/Dockerfile
     ports:
       - "8096:8080"
     environment:
@@ -267,10 +269,14 @@ services:
       REPO_ROOT: /repos
       WATCH_MODE: hook
       POLL_INTERVAL_SECONDS: "30"
+      # Hook scripts installed by /install-hook use this URL to call back to the watcher.
+      # localhost:8091 works when hooks run on the host machine (default).
+      # If your repo is inside a Docker container or devcontainer, use host.docker.internal:8091
+      # (Mac/Windows) or your host's docker bridge IP (Linux).
       WATCHER_URL: http://localhost:8091
       ALLOWED_REPO_ROOTS: /repos
     volumes:
-      - ~/workspaces:/repos
+      - ~/.tersecontext/repos:/repos:ro
     depends_on:
       redis:
         condition: service_healthy
@@ -283,7 +289,9 @@ services:
       retries: 5
 
   entrypoint-discoverer:
-    build: ./services/entrypoint-discoverer
+    build:
+      context: ./services
+      dockerfile: entrypoint-discoverer/Dockerfile
     ports:
       - "8092:8080"
     environment:
@@ -309,7 +317,9 @@ services:
       start_period: 15s
 
   instrumenter:
-    build: ./services/instrumenter
+    build:
+      context: ./services
+      dockerfile: instrumenter/Dockerfile
     ports:
       - "8093:8080"
     environment:
@@ -325,11 +335,13 @@ services:
       start_period: 15s
 
   trace-runner:
-    build: ./services/trace-runner
+    build:
+      context: ./services
+      dockerfile: trace-runner/Dockerfile
     ports:
       - "8094:8080"
     volumes:
-      - ~/workspaces:/repos:ro
+      - ~/.tersecontext/repos:/repos:ro
     environment:
       REDIS_URL: redis://redis:6379
       INSTRUMENTER_URL: http://instrumenter:8080
@@ -375,7 +387,7 @@ services:
     networks:
       - tersecontext
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:8088/health"]
+      test: ["CMD", "wget", "-qO-", "http://localhost:8087/health"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -400,7 +412,7 @@ services:
     networks:
       - tersecontext
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:8089/health"]
+      test: ["CMD", "wget", "-qO-", "http://localhost:8088/health"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -412,7 +424,7 @@ services:
     networks:
       - tersecontext
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:8090/health"]
+      test: ["CMD", "wget", "-qO-", "http://localhost:8089/health"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -450,7 +462,7 @@ services:
     ports:
       - "8098:8098"
     volumes:
-      - ~/workspaces:/repos:ro
+      - ~/.tersecontext/repos:/repos:ro
       - /tmp/go-trace-sessions:/tmp/sessions
       - ./services/tracert:/app/tracert:ro
     environment:
@@ -494,7 +506,9 @@ services:
       retries: 5
 
   trace-normalizer:
-    build: ./services/trace-normalizer
+    build:
+      context: ./services
+      dockerfile: trace-normalizer/Dockerfile
     ports:
       - "8095:8080"
     environment:
@@ -509,9 +523,16 @@ services:
         condition: service_healthy
     networks:
       - tersecontext
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   spec-generator:
-    build: ./services/spec-generator
+    build:
+      context: ./services
+      dockerfile: spec-generator/Dockerfile
     ports:
       - "8097:8080"
     environment:

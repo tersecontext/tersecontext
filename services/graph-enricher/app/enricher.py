@@ -17,8 +17,8 @@ UNWIND $edges AS e
 MATCH (a:Node {stable_id: e.source}), (b:Node {stable_id: e.target})
 MERGE (a)-[r:CALLS]->(b)
 SET r.source = CASE
-      -- Preserve any source already assigned by static analysis or prior traces;
-      -- only assign 'dynamic' when this is a brand-new edge with no prior source.
+      // Preserve any source already assigned by static analysis or prior traces;
+      // only assign 'dynamic' when this is a brand-new edge with no prior source.
       WHEN r.source IN ['static', 'confirmed', 'conflict'] THEN r.source
       ELSE 'dynamic'
     END,

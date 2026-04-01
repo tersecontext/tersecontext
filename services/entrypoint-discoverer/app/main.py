@@ -1,14 +1,17 @@
 # app/main.py
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
+from contextlib import asynccontextmanager
 
 import psycopg2
 import redis as redis_lib
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.responses import PlainTextResponse
 from neo4j import GraphDatabase
+from shared.service import ServiceBase
 
 from .discoverer import run_discover
 from .models import DiscoverRequest, DiscoverResponse
@@ -16,7 +19,7 @@ from .models import DiscoverRequest, DiscoverResponse
 logger = logging.getLogger(__name__)
 
 VERSION = "0.1.0"
-SERVICE = "entrypoint-discoverer"
+_svc = ServiceBase("entrypoint-discoverer", VERSION)
 
 _neo4j_driver = None
 _pg_conn = None
@@ -49,21 +52,30 @@ def _get_redis() -> redis_lib.Redis:
     return _redis_client
 
 
-app = FastAPI()
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    _svc._dep_checkers.clear()  # idempotent restart safety
 
+    async def check_redis() -> str | None:
+        try:
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, _get_redis().ping)
+            return None
+        except Exception as exc:
+            return f"redis: {exc}"
 
-@app.get("/health")
-def health():
-    return {"status": "ok", "service": SERVICE, "version": VERSION}
-
-
-@app.get("/ready")
-def ready():
+    _svc.add_dep_checker(check_redis)
     try:
-        _get_redis().ping()
-        return {"status": "ok"}
-    except Exception as exc:
-        return JSONResponse(status_code=503, content={"status": "unavailable", "error": "redis unavailable"})
+        yield
+    finally:
+        global _redis_client
+        if _redis_client is not None:
+            _redis_client.close()
+            _redis_client = None
+
+
+app = FastAPI(lifespan=lifespan)
+app.include_router(_svc.router)
 
 
 @app.get("/metrics")

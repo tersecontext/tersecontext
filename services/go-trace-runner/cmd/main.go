@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/redis/go-redis/v9"
 	"github.com/tersecontext/tc/services/go-trace-runner/internal/handlers"
 )
 
@@ -25,6 +26,16 @@ func main() {
 		sessionsDir = "/tmp/sessions"
 	}
 
+	redisURL := os.Getenv("REDIS_URL")
+	if redisURL == "" {
+		redisURL = "redis://localhost:6379"
+	}
+	redisOpts, err := redis.ParseURL(redisURL)
+	if err != nil {
+		log.Fatalf("invalid REDIS_URL: %v", err)
+	}
+	rdb := redis.NewClient(redisOpts)
+
 	var ready atomic.Bool
 	var traceStore sync.Map
 
@@ -32,7 +43,7 @@ func main() {
 	mux.HandleFunc("GET /health", handlers.Health)
 	mux.HandleFunc("GET /ready", handlers.Ready(&ready))
 	mux.HandleFunc("GET /metrics", handlers.Metrics)
-	mux.HandleFunc("POST /run", handlers.Run(&traceStore, sessionsDir))
+	mux.HandleFunc("POST /run", handlers.Run(&traceStore, sessionsDir, rdb))
 	mux.HandleFunc("GET /run/{id}/status", handlers.RunStatusHandler(&traceStore))
 
 	srv := &http.Server{Addr: ":" + port, Handler: mux}

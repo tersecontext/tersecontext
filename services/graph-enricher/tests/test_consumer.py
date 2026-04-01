@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch, call
 import pytest
 import redis.exceptions
 
-from app.consumer import _process_event, run_consumer, STREAM, GROUP
+from app.consumer import _process_event, run_consumer, STREAM, GROUP, GraphEnricherConsumer
 from app.models import ExecutionPath, CallNode, SideEffect, DynamicEdge
 
 
@@ -117,7 +117,7 @@ async def test_consumer_creates_group_on_startup():
 
     driver = MagicMock()
 
-    with patch("app.consumer.aioredis.from_url", return_value=mock_r):
+    with patch("shared.consumer.aioredis.from_url", return_value=mock_r):
         with pytest.raises(asyncio.CancelledError):
             await run_consumer(driver)
 
@@ -135,7 +135,7 @@ async def test_consumer_ignores_busygroup_error():
 
     driver = MagicMock()
 
-    with patch("app.consumer.aioredis.from_url", return_value=mock_r):
+    with patch("shared.consumer.aioredis.from_url", return_value=mock_r):
         with pytest.raises(asyncio.CancelledError):
             await run_consumer(driver)
 
@@ -168,7 +168,7 @@ async def test_consumer_acks_after_successful_processing():
 
     driver = _make_driver()
 
-    with patch("app.consumer.aioredis.from_url", return_value=mock_r), \
+    with patch("shared.consumer.aioredis.from_url", return_value=mock_r), \
          patch("app.consumer.enricher"):
         with pytest.raises(asyncio.CancelledError):
             await run_consumer(driver)
@@ -199,12 +199,15 @@ async def test_consumer_handles_malformed_messages():
 
     driver = _make_driver()
 
-    with patch("app.consumer.aioredis.from_url", return_value=mock_r):
+    with patch("shared.consumer.aioredis.from_url", return_value=mock_r):
         with pytest.raises(asyncio.CancelledError):
             await run_consumer(driver)
 
     # Malformed message should still be ACKed (skipped)
     mock_r.xack.assert_called_once_with(STREAM, GROUP, msg_id)
+    # Bad message must be forwarded to the DLQ
+    mock_r.xadd.assert_called_once()
+    assert "dlq" in mock_r.xadd.call_args[0][0]
 
 
 @pytest.mark.asyncio
@@ -230,12 +233,15 @@ async def test_consumer_handles_invalid_json():
 
     driver = _make_driver()
 
-    with patch("app.consumer.aioredis.from_url", return_value=mock_r):
+    with patch("shared.consumer.aioredis.from_url", return_value=mock_r):
         with pytest.raises(asyncio.CancelledError):
             await run_consumer(driver)
 
     # Invalid JSON still ACKed
     mock_r.xack.assert_called_once_with(STREAM, GROUP, msg_id)
+    # Bad message must be forwarded to the DLQ
+    mock_r.xadd.assert_called_once()
+    assert "dlq" in mock_r.xadd.call_args[0][0]
 
 
 @pytest.mark.asyncio
@@ -264,7 +270,7 @@ async def test_consumer_runs_post_batch_operations():
 
     driver = _make_driver()
 
-    with patch("app.consumer.aioredis.from_url", return_value=mock_r), \
+    with patch("shared.consumer.aioredis.from_url", return_value=mock_r), \
          patch("app.consumer.enricher") as mock_enricher:
         with pytest.raises(asyncio.CancelledError):
             await run_consumer(driver)
@@ -291,7 +297,7 @@ async def test_consumer_skips_post_batch_when_no_events():
 
     driver = _make_driver()
 
-    with patch("app.consumer.aioredis.from_url", return_value=mock_r), \
+    with patch("shared.consumer.aioredis.from_url", return_value=mock_r), \
          patch("app.consumer.enricher") as mock_enricher:
         with pytest.raises(asyncio.CancelledError):
             await run_consumer(driver)
@@ -302,7 +308,7 @@ async def test_consumer_skips_post_batch_when_no_events():
 
 @pytest.mark.asyncio
 async def test_consumer_handles_processing_error_gracefully():
-    """Consumer continues running when _process_event raises an exception."""
+    """Consumer continues running when post_batch raises an exception; messages are ACKed."""
     event = _make_execution_path()
     event_json = event.model_dump_json()
 
@@ -326,15 +332,15 @@ async def test_consumer_handles_processing_error_gracefully():
 
     driver = _make_driver()
 
-    with patch("app.consumer.aioredis.from_url", return_value=mock_r), \
+    with patch("shared.consumer.aioredis.from_url", return_value=mock_r), \
          patch("app.consumer.enricher") as mock_enricher:
-        # Make the enricher call fail
+        # Make the enricher call fail during post_batch
         mock_enricher.update_node_props_batch.side_effect = Exception("Neo4j timeout")
         with pytest.raises(asyncio.CancelledError):
             await run_consumer(driver)
 
-    # Message should NOT be ACKed since processing failed
-    mock_r.xack.assert_not_called()
+    # Message IS ACKed — handle() succeeded, post_batch() failure is separate
+    mock_r.xack.assert_called_once_with(STREAM, GROUP, msg_id)
 
 
 @pytest.mark.asyncio
@@ -355,9 +361,47 @@ async def test_consumer_handles_redis_loop_error():
 
     driver = _make_driver()
 
-    with patch("app.consumer.aioredis.from_url", return_value=mock_r):
+    with patch("shared.consumer.aioredis.from_url", return_value=mock_r):
         with pytest.raises(asyncio.CancelledError):
             await run_consumer(driver)
 
     # Consumer should have survived the first error and hit the second call
     assert mock_r.xreadgroup.call_count == 2
+
+
+# New tests for GraphEnricherConsumer
+
+
+@pytest.mark.asyncio
+async def test_consumer_batches_neo4j_writes():
+    """post_batch flushes all accumulated records in one call each."""
+    driver = _make_driver()
+    consumer = GraphEnricherConsumer(driver)
+
+    path1 = _make_execution_path()
+    path2 = _make_execution_path(entrypoint_stable_id="sha256:fn_test_register")
+
+    data1 = {"event": path1.model_dump_json().encode()}
+    data2 = {"event": path2.model_dump_json().encode()}
+
+    with patch("app.consumer.enricher") as mock_enricher:
+        mock_enricher.update_node_props_batch = MagicMock()
+        mock_enricher.upsert_dynamic_edges = MagicMock()
+        mock_enricher.confirm_static_edges = MagicMock()
+        mock_enricher.run_conflict_detector = MagicMock()
+        mock_enricher.run_staleness_downgrade = MagicMock()
+
+        # Accumulate two events
+        await consumer.handle(data1)
+        await consumer.handle(data2)
+        assert len(consumer._batch_node_records) > 0, "should have accumulated node records"
+
+        # post_batch must call each enricher function exactly once, with all accumulated data
+        await consumer.post_batch()
+        mock_enricher.update_node_props_batch.assert_called_once()
+        mock_enricher.run_conflict_detector.assert_called_once()
+
+    # Buffers cleared after post_batch
+    assert consumer._batch_node_records == []
+    assert consumer._batch_dynamic_edges == []
+    assert consumer._batch_observed_ids == []

@@ -117,7 +117,8 @@ class SpecStore:
             )
 
     def _upsert_qdrant_sync(
-        self, path: ExecutionPath, entrypoint_name: str, spec_text: str, vector: list[float]
+        self, path: ExecutionPath, entrypoint_name: str, spec_text: str,
+        vector: list[float], confidence_band: str
     ) -> None:
         point_id = str(uuid.uuid5(uuid.NAMESPACE_OID, f"{path.entrypoint_stable_id}:{path.repo}"))
         self._qdrant.upsert(
@@ -131,19 +132,21 @@ class SpecStore:
                         "entrypoint_name": entrypoint_name,
                         "repo": path.repo,
                         "commit_sha": path.commit_sha,
+                        "confidence_band": confidence_band,
+                        "coverage_pct": path.coverage_pct,
                     },
                 )
             ],
         )
 
     async def upsert_qdrant(
-        self, path: ExecutionPath, entrypoint_name: str, spec_text: str
+        self, path: ExecutionPath, entrypoint_name: str, spec_text: str, confidence_band: str
     ) -> None:
         vectors = await self._provider.embed([spec_text])
         vector = vectors[0]
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(
-            None, self._upsert_qdrant_sync, path, entrypoint_name, spec_text, vector
+            None, self._upsert_qdrant_sync, path, entrypoint_name, spec_text, vector, confidence_band
         )
 
     async def close(self) -> None:
