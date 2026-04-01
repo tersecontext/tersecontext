@@ -28,10 +28,26 @@ def test_ready_returns_200_when_redis_ok():
     with patch("app.main._get_neo4j_driver", return_value=MagicMock()), \
          patch("app.main._get_pg_conn", return_value=MagicMock()), \
          patch("app.main._get_redis", return_value=mock_r):
-        from app.main import app
-        client = TestClient(app)
-        resp = client.get("/ready")
+        from app.main import app, _svc
+        _svc._dep_checkers.clear()
+        with TestClient(app) as client:
+            resp = client.get("/ready")
     assert resp.status_code == 200
+    assert resp.json()["status"] == "ok"
+
+
+def test_ready_returns_503_when_redis_down():
+    mock_r = MagicMock()
+    mock_r.ping.side_effect = Exception("connection refused")
+    with patch("app.main._get_neo4j_driver", return_value=MagicMock()), \
+         patch("app.main._get_pg_conn", return_value=MagicMock()), \
+         patch("app.main._get_redis", return_value=mock_r):
+        from app.main import app, _svc
+        _svc._dep_checkers.clear()
+        with TestClient(app) as client:
+            resp = client.get("/ready")
+    assert resp.status_code == 503
+    assert any("redis" in e for e in resp.json()["errors"])
 
 
 def test_metrics_returns_prometheus_text():

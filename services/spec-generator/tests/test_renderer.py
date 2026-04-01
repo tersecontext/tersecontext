@@ -1,4 +1,4 @@
-from app.models import CallSequenceItem, ExecutionPath, SideEffect
+from app.models import CallSequenceItem, EdgeRef, ExecutionPath, SideEffect
 
 
 def _make_path(call_sequence=None, side_effects=None):
@@ -37,7 +37,7 @@ def test_path_section_header():
     path = _make_path(call_sequence=[_item("login", hop=0, avg_ms=12.5)])
     text = render_spec_text(path, "login")
     first_line = text.splitlines()[0]
-    assert first_line == "PATH login"
+    assert first_line.startswith("PATH login")
 
 
 def test_path_section_lists_items_in_hop_order():
@@ -160,3 +160,106 @@ def test_change_impact_deduplicates_tables():
     assert "CHANGE_IMPACT:" in text
     change_impact_section = text.split("CHANGE_IMPACT:")[1]
     assert change_impact_section.count("users") == 1
+
+
+# ── render_spec + _confidence_band ────────────────────────────────────────────
+
+def _make_rich_path(coverage_pct=0.85, dynamic_only=None, never_observed=None, call_sequence=None):
+    return ExecutionPath(
+        entrypoint_stable_id="sha256:fn_login",
+        commit_sha="abc123",
+        repo="acme",
+        call_sequence=call_sequence or [
+            CallSequenceItem(
+                stable_id="sha256:fn_validate",
+                name="validate",
+                qualified_name="auth.validate",
+                hop=1,
+                frequency_ratio=1.0,
+                avg_ms=10.0,
+            ),
+            CallSequenceItem(
+                stable_id="sha256:fn_audit",
+                name="audit_log",
+                qualified_name="audit.log",
+                hop=2,
+                frequency_ratio=0.5,
+                avg_ms=3.0,
+            ),
+        ],
+        side_effects=[],
+        dynamic_only_edges=dynamic_only or [],
+        never_observed_static_edges=never_observed or [],
+        timing_p50_ms=10.0,
+        timing_p99_ms=40.0,
+        coverage_pct=coverage_pct,
+    )
+
+
+def test_confidence_band_high():
+    from app.renderer import _confidence_band
+    assert _confidence_band(0.85) == "HIGH"
+    assert _confidence_band(0.80) == "HIGH"
+
+
+def test_confidence_band_medium():
+    from app.renderer import _confidence_band
+    assert _confidence_band(0.79) == "MEDIUM"
+    assert _confidence_band(0.40) == "MEDIUM"
+
+
+def test_confidence_band_low():
+    from app.renderer import _confidence_band
+    assert _confidence_band(0.39) == "LOW"
+    assert _confidence_band(0.0) == "LOW"
+
+
+def test_render_spec_returns_tuple():
+    from app.renderer import render_spec
+    path = _make_rich_path()
+    result = render_spec(path, "login")
+    assert isinstance(result, tuple) and len(result) == 2
+    spec_text, band = result
+    assert band == "HIGH"
+    assert isinstance(spec_text, str)
+
+
+def test_path_header_contains_band_and_coverage():
+    from app.renderer import render_spec
+    path = _make_rich_path(coverage_pct=0.84)
+    spec_text, _ = render_spec(path, "login")
+    first_line = spec_text.split("\n")[0]
+    assert "HIGH" in first_line
+    assert "84%" in first_line
+    assert first_line.startswith("PATH login")
+
+
+def test_low_coverage_warning():
+    from app.renderer import render_spec
+    path = _make_rich_path(coverage_pct=0.30)
+    spec_text, band = render_spec(path, "login")
+    assert band == "LOW"
+    assert "LOW COVERAGE" in spec_text
+
+
+def test_confirmed_tag_on_normal_call():
+    from app.renderer import render_spec
+    path = _make_rich_path(dynamic_only=[])
+    spec_text, _ = render_spec(path, "login")
+    assert "[confirmed]" in spec_text
+
+
+def test_dynamic_only_tag():
+    from app.renderer import render_spec
+    path = _make_rich_path(dynamic_only=[EdgeRef(source="sha256:fn_login", target="sha256:fn_audit")])
+    spec_text, _ = render_spec(path, "login")
+    assert "[dynamic-only]" in spec_text
+
+
+def test_static_only_warning():
+    from app.renderer import render_spec
+    never_obs = [EdgeRef(source="sha256:fn_login", target="sha256:fn_notify")]
+    path = _make_rich_path(never_observed=never_obs)
+    spec_text, _ = render_spec(path, "login")
+    assert "static-only" in spec_text
+    assert "fn_notify" in spec_text or "sha256:fn_notify" in spec_text

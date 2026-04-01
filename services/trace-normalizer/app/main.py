@@ -2,35 +2,24 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
 from contextlib import asynccontextmanager
 
 import redis as redis_lib
 from fastapi import FastAPI
-
-logging.basicConfig(level=logging.INFO)
-from fastapi.responses import JSONResponse, PlainTextResponse
-
-from .classifier import classify_side_effects
-from .emitter import emit_execution_path
-from .models import RawTrace
-from .normalizer import aggregate_frequencies, compute_percentiles, reconstruct_call_tree
-from .reconciler import reconcile
+from fastapi.responses import PlainTextResponse
+from shared.service import ServiceBase
 
 logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
 
 VERSION = "0.1.0"
-SERVICE = "trace-normalizer"
-INPUT_STREAM = "stream:raw-traces"
-CONSUMER_GROUP = "normalizer-group"
-CONSUMER_NAME = "normalizer-0"
+_svc = ServiceBase("trace-normalizer", VERSION)
 
 _redis_client: redis_lib.Redis | None = None
 _neo4j_driver = None
-_events_processed: int = 0
-_consumer_task: asyncio.Task | None = None
+_consumer = None  # NormalizerConsumer | None
 
 
 def _get_redis() -> redis_lib.Redis:
@@ -61,127 +50,60 @@ def _get_neo4j_driver():
     return _neo4j_driver
 
 
-def _ensure_consumer_group(r: redis_lib.Redis) -> None:
-    try:
-        r.xgroup_create(INPUT_STREAM, CONSUMER_GROUP, id="0", mkstream=True)
-    except redis_lib.exceptions.ResponseError as exc:
-        if "BUSYGROUP" not in str(exc):
-            raise
-
-
-def _process_message(r: redis_lib.Redis, driver, raw_json: str) -> None:
-    global _events_processed
-    trace = RawTrace.model_validate_json(raw_json)
-    nodes = reconstruct_call_tree(trace.events)
-
-    repo = trace.repo or "unknown"
-    agg_key = f"trace_agg:{repo}:{trace.entrypoint_stable_id}"
-    raw_agg = r.get(agg_key)
-    existing_agg = json.loads(raw_agg) if raw_agg else {}
-    max_runs = max((v.get("runs", 0) for v in existing_agg.values()), default=0) + 1
-
-    nodes = aggregate_frequencies(r, repo, trace.entrypoint_stable_id, nodes, max_runs)
-
-    side_effects = classify_side_effects(trace.events)
-
-    observed_fns = {ev.fn for ev in trace.events if ev.type == "call"}
-    dynamic_only, never_observed = reconcile(driver, repo, trace.entrypoint_stable_id, observed_fns)
-
-    durations = [n.avg_ms for n in nodes if n.avg_ms > 0]
-    p50, p99 = compute_percentiles(durations or [trace.duration_ms])
-
-    from .models import ExecutionPath
-    ep = ExecutionPath(
-        entrypoint_stable_id=trace.entrypoint_stable_id,
-        commit_sha=trace.commit_sha,
-        repo=repo,
-        call_sequence=nodes,
-        side_effects=side_effects,
-        dynamic_only_edges=dynamic_only,
-        never_observed_static_edges=never_observed,
-        timing_p50_ms=p50,
-        timing_p99_ms=p99,
-    )
-    emit_execution_path(r, ep)
-    _events_processed += 1
-
-
-DLQ_STREAM = "stream:raw-traces-dlq"
-
-
-async def _consumer_loop(r: redis_lib.Redis, driver) -> None:
-    _ensure_consumer_group(r)
-    logger.info("Consumer group ready, listening on %s", INPUT_STREAM)
-    loop = asyncio.get_event_loop()
-    while True:
-        try:
-            messages = await loop.run_in_executor(
-                None,
-                lambda: r.xreadgroup(
-                    CONSUMER_GROUP,
-                    CONSUMER_NAME,
-                    {INPUT_STREAM: ">"},
-                    count=10,
-                    block=1000,
-                ),
-            )
-            if not messages:
-                await asyncio.sleep(0)
-                continue
-            for _stream, entries in messages:
-                for msg_id, fields in entries:
-                    raw = fields.get(b"event") or fields.get("event")
-                    if raw:
-                        try:
-                            _process_message(r, driver, raw if isinstance(raw, str) else raw.decode())
-                            r.xack(INPUT_STREAM, CONSUMER_GROUP, msg_id)
-                        except Exception as exc:
-                            logger.error("Failed to process message %s: %s — sending to DLQ", msg_id, exc)
-                            r.xadd(DLQ_STREAM, {b"msg_id": msg_id, b"error": str(exc).encode(), b"raw": raw if isinstance(raw, bytes) else raw.encode()})
-                            r.xack(INPUT_STREAM, CONSUMER_GROUP, msg_id)
-        except asyncio.CancelledError:
-            break
-        except Exception as exc:
-            logger.error("Consumer loop error: %s", exc)
-            await asyncio.sleep(1)
+def _process_message(r, driver, raw_json: str) -> None:
+    """Backward-compat shim used by existing tests. New code uses NormalizerConsumer."""
+    from .consumer import NormalizerConsumer
+    NormalizerConsumer._process_sync(r, driver, raw_json)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _consumer_task
-    r = _get_redis()
+    global _consumer
+    from .consumer import NormalizerConsumer
+
+    _svc._dep_checkers.clear()  # idempotent restart safety
+
+    r_sync = _get_redis()
     driver = _get_neo4j_driver()
-    _consumer_task = asyncio.create_task(_consumer_loop(r, driver))
+
+    async def check_redis() -> str | None:
+        try:
+            r_sync.ping()
+            return None
+        except Exception as exc:
+            return f"redis: {exc}"
+
+    _svc.add_dep_checker(check_redis)
+    if driver is not None:
+        async def check_neo4j() -> str | None:
+            try:
+                loop = asyncio.get_running_loop()
+                await loop.run_in_executor(None, driver.verify_connectivity)
+                return None
+            except Exception as exc:
+                return f"neo4j: {exc}"
+        _svc.add_dep_checker(check_neo4j)
+
+    redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379")
+    _consumer = NormalizerConsumer(r_sync, driver)
+    consumer_task = asyncio.create_task(_consumer.run(redis_url))
     try:
         yield
     finally:
-        if _consumer_task:
-            _consumer_task.cancel()
-            try:
-                await _consumer_task
-            except asyncio.CancelledError:
-                pass
+        consumer_task.cancel()
+        try:
+            await consumer_task
+        except asyncio.CancelledError:
+            pass
         if _redis_client is not None:
             _redis_client.close()
         if _neo4j_driver is not None:
             _neo4j_driver.close()
+        _consumer = None
 
 
 app = FastAPI(lifespan=lifespan)
-
-
-@app.get("/health")
-def health():
-    return {"status": "ok", "service": SERVICE, "version": VERSION}
-
-
-@app.get("/ready")
-def ready():
-    try:
-        _get_redis().ping()
-        return {"status": "ok"}
-    except Exception as exc:
-        return JSONResponse(status_code=503, content={"status": "unavailable", "error": "redis unavailable"})
+app.include_router(_svc.router)  # registers /health and /ready
 
 
 @app.get("/metrics")
@@ -189,6 +111,6 @@ def metrics():
     lines = [
         "# HELP trace_normalizer_events_processed_total Total ExecutionPath events emitted",
         "# TYPE trace_normalizer_events_processed_total counter",
-        f"trace_normalizer_events_processed_total {_events_processed}",
+        f"trace_normalizer_events_processed_total {_consumer.events_processed if _consumer else 0}",
     ]
     return PlainTextResponse("\n".join(lines) + "\n")

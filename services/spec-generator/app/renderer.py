@@ -1,6 +1,19 @@
 from __future__ import annotations
 import re
+from typing import Literal
 from app.models import ExecutionPath
+
+ConfidenceBand = Literal["HIGH", "MEDIUM", "LOW"]
+
+
+def _confidence_band(coverage_pct: float | None) -> ConfidenceBand:
+    if coverage_pct is None:
+        return "MEDIUM"
+    if coverage_pct >= 0.80:
+        return "HIGH"
+    if coverage_pct >= 0.40:
+        return "MEDIUM"
+    return "LOW"
 
 _SIDE_EFFECT_LABELS = {
     "db_read":    "DB READ",
@@ -57,18 +70,37 @@ def _extract_service(detail: str) -> str:
     return parts[-1] if parts else detail
 
 
-def render_spec_text(path: ExecutionPath, entrypoint_name: str) -> str:
+def render_spec(path: ExecutionPath, entrypoint_name: str) -> tuple[str, ConfidenceBand]:
+    band = _confidence_band(path.coverage_pct)
+    coverage_pct_display = f"{round((path.coverage_pct or 0.0) * 100)}%"
+
     lines: list[str] = []
 
-    # PATH section
-    lines.append(f"PATH {entrypoint_name}")
+    # PATH header with confidence band
+    lines.append(
+        f"PATH {entrypoint_name}  ({band} confidence · {coverage_pct_display} branch coverage)"
+    )
+    if band == "LOW":
+        lines.append("⚠ LOW COVERAGE — spec reflects partial observation only")
+
+    # Build provenance lookup set from dynamic-only edge targets
+    dynamic_only_targets = {e.target for e in path.dynamic_only_edges}
+
     for i, item in enumerate(path.call_sequence, start=1):
         freq_str = f"{item.frequency_ratio:.2f}"
         ms_str = f"~{item.avg_ms:.1f}ms"
-        line = f"  {i}.  {item.name}    {freq_str}    {ms_str}"
+        tag = "[dynamic-only]" if item.stable_id in dynamic_only_targets else "[confirmed]"
+        line = f"  {i}.  {item.name}    {freq_str}    {ms_str}    {tag}"
         if item.args:
             line += f"    args: {item.args}"
         lines.append(line)
+
+    # Static-only warnings
+    for edge in path.never_observed_static_edges:
+        lines.append(
+            f"  ⚠ {edge.target}   static-only — present in AST but never observed"
+        )
+
     lines.append("")
 
     # SIDE_EFFECTS section
@@ -115,4 +147,10 @@ def render_spec_text(path: ExecutionPath, entrypoint_name: str) -> str:
                 svc_parts.append(f"{svc}{cond}")
             lines.append(f"  external services  {'  '.join(svc_parts)}")
 
-    return "\n".join(lines)
+    return "\n".join(lines), band
+
+
+def render_spec_text(path: ExecutionPath, entrypoint_name: str) -> str:
+    """Backward-compatible alias for render_spec — returns spec_text only."""
+    spec_text, _ = render_spec(path, entrypoint_name)
+    return spec_text

@@ -13,6 +13,7 @@ from pydantic import ValidationError
 from app.models import PerfMetric
 from app.analyzer import detect_queue_buildup, detect_processing_lag, detect_slow_functions, detect_throughput_drop
 from app.store import PerfStore
+from app.aggregator import extract_metrics_from_raw_trace, extract_metrics_from_execution_path
 
 logger = logging.getLogger(__name__)
 
@@ -24,92 +25,6 @@ GROUP_PATHS = "perf-tracker-paths"
 messages_processed_total: int = 0
 messages_failed_total: int = 0
 metrics_written_total: int = 0
-
-
-def extract_metrics_from_raw_trace(data: dict) -> list[PerfMetric]:
-    metrics: list[PerfMetric] = []
-    repo = data.get("repo", "")
-    commit_sha = data.get("commit_sha")
-    entrypoint_id = data.get("entrypoint_stable_id", "")
-    duration_ms = data.get("duration_ms", 0.0)
-    events = data.get("events", [])
-
-    metrics.append(PerfMetric(
-        metric_type="user_code", metric_name="entrypoint_duration",
-        entity_id=entrypoint_id, repo=repo,
-        value=duration_ms, unit="ms", commit_sha=commit_sha,
-    ))
-
-    call_stack: list[dict] = []
-    fn_durations: dict[str, list[float]] = {}
-    fn_counts: dict[str, int] = {}
-
-    for event in events:
-        fn_key = f"{event['file']}:{event['fn']}"
-        if event["type"] == "call":
-            call_stack.append(event)
-            fn_counts[fn_key] = fn_counts.get(fn_key, 0) + 1
-        elif event["type"] == "return" and call_stack:
-            for i in range(len(call_stack) - 1, -1, -1):
-                if call_stack[i]["fn"] == event["fn"]:
-                    call_event = call_stack.pop(i)
-                    duration = event["timestamp_ms"] - call_event["timestamp_ms"]
-                    fn_durations.setdefault(fn_key, []).append(duration)
-                    break
-
-    for fn_key, durations in fn_durations.items():
-        avg = sum(durations) / len(durations)
-        metrics.append(PerfMetric(
-            metric_type="user_code", metric_name="fn_duration",
-            entity_id=fn_key, repo=repo,
-            value=avg, unit="ms", commit_sha=commit_sha,
-        ))
-
-    for fn_key, count in fn_counts.items():
-        metrics.append(PerfMetric(
-            metric_type="user_code", metric_name="call_frequency",
-            entity_id=fn_key, repo=repo,
-            value=count, unit="count", commit_sha=commit_sha,
-        ))
-
-    return metrics
-
-
-def extract_metrics_from_execution_path(data: dict) -> list[PerfMetric]:
-    metrics: list[PerfMetric] = []
-    repo = data.get("repo", "")
-    commit_sha = data.get("commit_sha")
-    entrypoint_id = data.get("entrypoint_stable_id", "")
-    call_sequence = data.get("call_sequence", [])
-    side_effects = data.get("side_effects", [])
-
-    max_hop = max((item["hop"] for item in call_sequence), default=-1)
-    metrics.append(PerfMetric(
-        metric_type="user_code", metric_name="call_depth",
-        entity_id=entrypoint_id, repo=repo,
-        value=max_hop + 1, unit="count", commit_sha=commit_sha,
-    ))
-
-    metrics.append(PerfMetric(
-        metric_type="user_code", metric_name="side_effect_count",
-        entity_id=entrypoint_id, repo=repo,
-        value=len(side_effects), unit="count", commit_sha=commit_sha,
-    ))
-
-    timing_p50 = data.get("timing_p50_ms", 0.0)
-    timing_p99 = data.get("timing_p99_ms", 0.0)
-    metrics.append(PerfMetric(
-        metric_type="user_code", metric_name="timing_p50",
-        entity_id=entrypoint_id, repo=repo,
-        value=timing_p50, unit="ms", commit_sha=commit_sha,
-    ))
-    metrics.append(PerfMetric(
-        metric_type="user_code", metric_name="timing_p99",
-        entity_id=entrypoint_id, repo=repo,
-        value=timing_p99, unit="ms", commit_sha=commit_sha,
-    ))
-
-    return metrics
 
 
 async def _collect_pipeline_metrics(redis_client: aioredis.Redis) -> list[PerfMetric]:
@@ -149,6 +64,8 @@ async def run_collector(store: PerfStore, redis_client: aioredis.Redis) -> None:
     trace_timestamps: dict[str, float] = {}
     _MAX_TRACE_TIMESTAMPS = 10000
     throughput_counts: dict[str, list[float]] = {}
+    prev_depths: dict[str, int] = {}
+    prev_throughput: dict[str, float] = {}
 
     while True:
         try:
@@ -266,9 +183,9 @@ async def run_collector(store: PerfStore, redis_client: aioredis.Redis) -> None:
                     m.entity_id: int(m.value)
                     for m in pipeline_metrics if m.metric_name == "queue_depth"
                 }
-                if hasattr(store, '_prev_depths'):
-                    all_bottlenecks.extend(detect_queue_buildup(store._prev_depths, curr_depths, repo="_pipeline"))
-                store._prev_depths = curr_depths
+                if prev_depths:
+                    all_bottlenecks.extend(detect_queue_buildup(prev_depths, curr_depths, repo="_pipeline"))
+                prev_depths = curr_depths
 
                 # Processing lag detection
                 lag_threshold = float(os.environ.get("LAG_THRESHOLD_S", "10"))
@@ -281,17 +198,13 @@ async def run_collector(store: PerfStore, redis_client: aioredis.Redis) -> None:
                 throughput_drop_pct = float(os.environ.get("THROUGHPUT_DROP_PCT", "50"))
                 throughput_metrics = [m for m in pending_metrics if m.metric_name == "stream_throughput"]
                 for tm in throughput_metrics:
-                    # Use current rate as both current and rolling avg for now
-                    # A proper rolling average would need historical data
-                    if hasattr(store, '_prev_throughput') and tm.entity_id in store._prev_throughput:
+                    if tm.entity_id in prev_throughput:
                         all_bottlenecks.extend(detect_throughput_drop(
-                            tm.value, store._prev_throughput[tm.entity_id], throughput_drop_pct,
+                            tm.value, prev_throughput[tm.entity_id], throughput_drop_pct,
                             tm.entity_id, repo="_pipeline",
                         ))
-                if not hasattr(store, '_prev_throughput'):
-                    store._prev_throughput = {}
                 for tm in throughput_metrics:
-                    store._prev_throughput[tm.entity_id] = tm.value
+                    prev_throughput[tm.entity_id] = tm.value
 
                 # Slow function detection from pending metrics
                 slow_rows = [
@@ -300,7 +213,7 @@ async def run_collector(store: PerfStore, redis_client: aioredis.Redis) -> None:
                 ]
                 if slow_rows:
                     slow_rows.sort(key=lambda r: r["value"], reverse=True)
-                    all_bottlenecks.extend(detect_slow_functions(slow_rows[:20], repo=repos.pop() if repos else "_pipeline"))
+                    all_bottlenecks.extend(detect_slow_functions(slow_rows[:20], repo=next(iter(repos)) if repos else "_pipeline"))
 
                 if all_bottlenecks:
                     bottleneck_jsons = [b.model_dump_json() for b in all_bottlenecks]

@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 from pydantic import ValidationError
 
 from app.models import CallSequenceItem, ExecutionPath
+from app.consumer import SpecGeneratorConsumer
 
 
 def _make_path_dict(call_sequence=None):
@@ -31,139 +32,155 @@ def _make_path_dict(call_sequence=None):
     }
 
 
-async def test_process_valid_message_calls_store():
-    from app.consumer import _process
-
+def _make_store():
     mock_store = MagicMock()
     mock_store.upsert_spec = AsyncMock()
     mock_store.upsert_qdrant = AsyncMock()
+    return mock_store
+
+
+async def test_process_valid_message_calls_store():
+    mock_store = _make_store()
+    consumer = SpecGeneratorConsumer(mock_store)
 
     data = {"event": json.dumps(_make_path_dict())}
-    await _process(data, mock_store)
+    await consumer.handle(data)
 
     mock_store.upsert_spec.assert_called_once()
     mock_store.upsert_qdrant.assert_called_once()
 
     # entrypoint_name should be "login" (first call_sequence item)
-    _, entrypoint_name, _ = mock_store.upsert_qdrant.call_args[0]
+    _, entrypoint_name, _, _ = mock_store.upsert_qdrant.call_args[0]
     assert entrypoint_name == "login"
 
 
 async def test_process_empty_call_sequence_falls_back_to_stable_id():
-    from app.consumer import _process
-
-    mock_store = MagicMock()
-    mock_store.upsert_spec = AsyncMock()
-    mock_store.upsert_qdrant = AsyncMock()
+    mock_store = _make_store()
+    consumer = SpecGeneratorConsumer(mock_store)
 
     data = {"event": json.dumps(_make_path_dict(call_sequence=[]))}
-    await _process(data, mock_store)
+    await consumer.handle(data)
 
-    _, entrypoint_name, _ = mock_store.upsert_qdrant.call_args[0]
+    _, entrypoint_name, _, _ = mock_store.upsert_qdrant.call_args[0]
     assert entrypoint_name == "sha256:fn_login"
 
 
 async def test_process_validation_error_raises():
-    from app.consumer import _process
-
-    mock_store = MagicMock()
-    mock_store.upsert_spec = AsyncMock()
-    mock_store.upsert_qdrant = AsyncMock()
+    mock_store = _make_store()
+    consumer = SpecGeneratorConsumer(mock_store)
 
     data = {"event": json.dumps({"bad": "data"})}
     with pytest.raises(ValidationError):
-        await _process(data, mock_store)
+        await consumer.handle(data)
 
     mock_store.upsert_spec.assert_not_called()
 
 
 async def test_process_missing_event_key_raises():
-    from app.consumer import _process
+    mock_store = _make_store()
+    consumer = SpecGeneratorConsumer(mock_store)
 
-    mock_store = MagicMock()
     data = {}
     with pytest.raises(KeyError):
-        await _process(data, mock_store)
+        await consumer.handle(data)
 
 
 async def test_process_postgres_failure_propagates():
-    from app.consumer import _process
-
-    mock_store = MagicMock()
+    mock_store = _make_store()
     mock_store.upsert_spec = AsyncMock(side_effect=Exception("postgres down"))
-    mock_store.upsert_qdrant = AsyncMock()
+    consumer = SpecGeneratorConsumer(mock_store)
 
     data = {"event": json.dumps(_make_path_dict())}
     with pytest.raises(Exception, match="postgres down"):
-        await _process(data, mock_store)
+        await consumer.handle(data)
 
     mock_store.upsert_qdrant.assert_not_called()
 
 
 async def test_process_same_message_twice_calls_store_twice():
     """Consumer must not short-circuit on duplicates — version increment is Postgres's job."""
-    from app.consumer import _process
-
-    mock_store = MagicMock()
-    mock_store.upsert_spec = AsyncMock()
-    mock_store.upsert_qdrant = AsyncMock()
+    mock_store = _make_store()
+    consumer = SpecGeneratorConsumer(mock_store)
 
     data = {"event": json.dumps(_make_path_dict())}
-    await _process(data, mock_store)
-    await _process(data, mock_store)
+    await consumer.handle(data)
+    await consumer.handle(data)
 
     assert mock_store.upsert_spec.call_count == 2
     assert mock_store.upsert_qdrant.call_count == 2
 
 
 async def test_process_bytes_event_decoded():
-    from app.consumer import _process
-
-    mock_store = MagicMock()
-    mock_store.upsert_spec = AsyncMock()
-    mock_store.upsert_qdrant = AsyncMock()
+    mock_store = _make_store()
+    consumer = SpecGeneratorConsumer(mock_store)
 
     data = {b"event": json.dumps(_make_path_dict()).encode()}
-    await _process(data, mock_store)
+    await consumer.handle(data)
 
     mock_store.upsert_spec.assert_called_once()
 
 
 async def test_successful_process_increments_written_and_embedded_counters():
-    import app.consumer as consumer
-    from app.consumer import _process
+    import app.consumer as consumer_mod
 
-    consumer.specs_written_total = 0
-    consumer.specs_embedded_total = 0
+    consumer_mod.specs_written_total = 0
+    consumer_mod.specs_embedded_total = 0
 
-    mock_store = MagicMock()
-    mock_store.upsert_spec = AsyncMock()
-    mock_store.upsert_qdrant = AsyncMock()
+    mock_store = _make_store()
+    consumer = SpecGeneratorConsumer(mock_store)
 
     data = {"event": json.dumps(_make_path_dict())}
-    await _process(data, mock_store)
+    await consumer.handle(data)
 
-    assert consumer.specs_written_total == 1
-    assert consumer.specs_embedded_total == 1
+    assert consumer_mod.specs_written_total == 1
+    assert consumer_mod.specs_embedded_total == 1
 
 
 async def test_malformed_message_increments_failed_counter():
-    import app.consumer as consumer
-    from app.consumer import _process
+    import app.consumer as consumer_mod
 
-    consumer.messages_failed_total = 0
+    consumer_mod.messages_failed_total = 0
 
+    mock_store = _make_store()
+    consumer = SpecGeneratorConsumer(mock_store)
+
+    # ValidationError from bad data propagates out of handle()
+    # messages_failed_total is NOT incremented in handle() — it was always
+    # incremented in the caller (run_consumer / RedisConsumerBase).
+    # ValidationError is NOT a KeyError/ValueError, so RedisConsumerBase
+    # will log it and not ACK (retry), without touching messages_failed_total.
+    data = {"event": json.dumps({"bad": "data"})}
+    with pytest.raises(ValidationError):
+        await consumer.handle(data)
+
+    # messages_failed_total is incremented in the consumer loop, not in handle()
+    assert consumer_mod.messages_failed_total == 0
+
+
+@pytest.mark.asyncio
+async def test_process_passes_confidence_band_to_qdrant():
     mock_store = MagicMock()
     mock_store.upsert_spec = AsyncMock()
     mock_store.upsert_qdrant = AsyncMock()
 
-    # ValidationError from bad data increments failed counter via run_consumer,
-    # but _process itself raises — verify the counter logic is in the right layer
-    # by testing that _process raises ValidationError (counter incremented in caller)
-    data = {"event": json.dumps({"bad": "data"})}
-    with pytest.raises(ValidationError):
-        await _process(data, mock_store)
+    consumer = SpecGeneratorConsumer(mock_store)
+    path_dict = _make_path_dict()
+    path_dict["coverage_pct"] = 0.85
+    data = {"event": json.dumps(path_dict).encode()}
 
-    # messages_failed_total is incremented in run_consumer's except branch, not in _process
-    # so after a raw _process call it remains 0; the increment happens in the consumer loop
-    assert consumer.messages_failed_total == 0
+    await consumer.handle(data)
+
+    args = mock_store.upsert_qdrant.call_args[0]
+    assert len(args) == 4, f"expected 4 args, got {len(args)}: {args}"
+    confidence_band = args[3]
+    assert confidence_band in ("HIGH", "MEDIUM", "LOW")
+
+
+@pytest.mark.asyncio
+async def test_consumer_is_redis_consumer_base():
+    """SpecGeneratorConsumer inherits RedisConsumerBase."""
+    from shared.consumer import RedisConsumerBase
+    from app.consumer import SpecGeneratorConsumer
+    assert issubclass(SpecGeneratorConsumer, RedisConsumerBase)
+    assert SpecGeneratorConsumer.stream == "stream:execution-paths"
+    assert SpecGeneratorConsumer.group == "spec-generator-group"

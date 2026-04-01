@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"golang.org/x/tools/go/ast/astutil"
+	"github.com/tersecontext/tc/services/go-instrumenter/internal/rewriter/passes"
 )
 
 const tracertImport = "github.com/tersecontext/tc/services/tracert"
@@ -59,38 +59,15 @@ func (rw *Rewriter) RewriteSource(filename string, src []byte) ([]byte, error) {
 		shortName := shortFuncName(pkgName, fd)
 		isBoundary := rw.matcher != nil && rw.matcher.IsBoundary(shortName)
 
-		enterCall := buildEnterCall(funcID, fd, isBoundary)
-		deferStmt := buildDeferStmt()
-
-		// Prepend: __span := tracert.Enter(...) and defer func() { ... }()
-		newStmts := []ast.Stmt{
-			&ast.AssignStmt{
-				Lhs: []ast.Expr{ast.NewIdent("__span")},
-				Tok: token.DEFINE,
-				Rhs: []ast.Expr{enterCall},
-			},
-			deferStmt,
-		}
-		fd.Body.List = append(newStmts, fd.Body.List...)
+		passes.InjectEntry(fd, funcID, isBoundary)
 		return true
 	})
 
 	// Second pass: replace GoStmt nodes with tracert.Go(...) calls
-	astutil.Apply(file, func(c *astutil.Cursor) bool {
-		gs, ok := c.Node().(*ast.GoStmt)
-		if !ok {
-			return true
-		}
-
-		// Replace `go f(args)` or `go func() { ... }()` with
-		// `tracert.Go(func() { f(args) })` or `tracert.Go(func() { (func(){...})() })`
-		wrapped := wrapGoStmt(gs)
-		c.Replace(&ast.ExprStmt{X: wrapped})
-		return true
-	}, nil)
+	passes.WrapGoroutines(file)
 
 	// Add the tracert import
-	astutil.AddImport(fset, file, tracertImport)
+	passes.EnsureImport(fset, file, tracertImport)
 
 	// Format the result
 	var buf bytes.Buffer
@@ -200,119 +177,4 @@ func receiverTypeName(expr ast.Expr) string {
 		return receiverTypeName(t.X)
 	}
 	return "Unknown"
-}
-
-// buildEnterCall constructs the `tracert.Enter(funcID, args...)` call expression.
-// For boundary functions, all parameter names are appended as arguments.
-func buildEnterCall(funcID string, fd *ast.FuncDecl, isBoundary bool) *ast.CallExpr {
-	args := []ast.Expr{
-		&ast.BasicLit{Kind: token.STRING, Value: fmt.Sprintf("%q", funcID)},
-	}
-
-	if isBoundary && fd.Type.Params != nil {
-		for _, field := range fd.Type.Params.List {
-			for _, name := range field.Names {
-				args = append(args, ast.NewIdent(name.Name))
-			}
-		}
-	}
-
-	return &ast.CallExpr{
-		Fun: &ast.SelectorExpr{
-			X:   ast.NewIdent("tracert"),
-			Sel: ast.NewIdent("Enter"),
-		},
-		Args: args,
-	}
-}
-
-// buildDeferStmt constructs:
-//
-//	defer func() {
-//	    if __r := recover(); __r != nil {
-//	        tracert.ExitPanic(__span, __r)
-//	        panic(__r)
-//	    }
-//	    tracert.Exit(__span)
-//	}()
-func buildDeferStmt() *ast.DeferStmt {
-	// tracert.ExitPanic(__span, __r)
-	exitPanicCall := &ast.ExprStmt{X: &ast.CallExpr{
-		Fun: &ast.SelectorExpr{
-			X:   ast.NewIdent("tracert"),
-			Sel: ast.NewIdent("ExitPanic"),
-		},
-		Args: []ast.Expr{
-			ast.NewIdent("__span"),
-			ast.NewIdent("__r"),
-		},
-	}}
-
-	// panic(__r)
-	rePanic := &ast.ExprStmt{X: &ast.CallExpr{
-		Fun:  ast.NewIdent("panic"),
-		Args: []ast.Expr{ast.NewIdent("__r")},
-	}}
-
-	// if __r := recover(); __r != nil { ... }
-	ifStmt := &ast.IfStmt{
-		Init: &ast.AssignStmt{
-			Lhs: []ast.Expr{ast.NewIdent("__r")},
-			Tok: token.DEFINE,
-			Rhs: []ast.Expr{&ast.CallExpr{Fun: ast.NewIdent("recover")}},
-		},
-		Cond: &ast.BinaryExpr{
-			X:  ast.NewIdent("__r"),
-			Op: token.NEQ,
-			Y:  ast.NewIdent("nil"),
-		},
-		Body: &ast.BlockStmt{
-			List: []ast.Stmt{exitPanicCall, rePanic},
-		},
-	}
-
-	// tracert.Exit(__span)
-	exitCall := &ast.ExprStmt{X: &ast.CallExpr{
-		Fun: &ast.SelectorExpr{
-			X:   ast.NewIdent("tracert"),
-			Sel: ast.NewIdent("Exit"),
-		},
-		Args: []ast.Expr{ast.NewIdent("__span")},
-	}}
-
-	// func() { ... }()
-	funcLit := &ast.FuncLit{
-		Type: &ast.FuncType{Params: &ast.FieldList{}},
-		Body: &ast.BlockStmt{
-			List: []ast.Stmt{ifStmt, exitCall},
-		},
-	}
-
-	return &ast.DeferStmt{
-		Call: &ast.CallExpr{
-			Fun: funcLit,
-		},
-	}
-}
-
-// wrapGoStmt wraps a GoStmt's call expression inside tracert.Go(func() { ... }).
-// For `go f(args)` → `tracert.Go(func() { f(args) })`
-// For `go func() { ... }()` → `tracert.Go(func() { (func(){ ... })() })`
-func wrapGoStmt(gs *ast.GoStmt) *ast.CallExpr {
-	innerStmt := &ast.ExprStmt{X: gs.Call}
-
-	wrappedFunc := &ast.FuncLit{
-		Type: &ast.FuncType{Params: &ast.FieldList{}},
-		Body: &ast.BlockStmt{
-			List: []ast.Stmt{innerStmt},
-		},
-	}
-
-	return &ast.CallExpr{
-		Fun: &ast.SelectorExpr{
-			X:   ast.NewIdent("tracert"),
-			Sel: ast.NewIdent("Go"),
-		},
-		Args: []ast.Expr{wrappedFunc},
-	}
 }
