@@ -1,4 +1,5 @@
 # tests/test_main.py
+import os
 from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
 
@@ -27,7 +28,8 @@ def test_ready_returns_200_when_redis_ok():
     mock_r.ping.return_value = True
     with patch("app.main._get_neo4j_driver", return_value=MagicMock()), \
          patch("app.main._get_pg_conn", return_value=MagicMock()), \
-         patch("app.main._get_redis", return_value=mock_r):
+         patch("app.main._get_redis", return_value=mock_r), \
+         patch.dict("os.environ", {"NEO4J_PASSWORD": "test", "POSTGRES_DSN": "test"}):
         from app.main import app, _svc
         _svc._dep_checkers.clear()
         with TestClient(app) as client:
@@ -41,7 +43,8 @@ def test_ready_returns_503_when_redis_down():
     mock_r.ping.side_effect = Exception("connection refused")
     with patch("app.main._get_neo4j_driver", return_value=MagicMock()), \
          patch("app.main._get_pg_conn", return_value=MagicMock()), \
-         patch("app.main._get_redis", return_value=mock_r):
+         patch("app.main._get_redis", return_value=mock_r), \
+         patch.dict("os.environ", {"NEO4J_PASSWORD": "test", "POSTGRES_DSN": "test"}):
         from app.main import app, _svc
         _svc._dep_checkers.clear()
         with TestClient(app) as client:

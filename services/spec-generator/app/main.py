@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.responses import PlainTextResponse
-from shared.service import ServiceBase
+from shared.service import ServiceBase, validate_env
 
 from . import consumer as _consumer
 
@@ -41,6 +41,7 @@ async def lifespan(app: FastAPI):
     from app.store import SpecStore
     from app.consumer import SpecGeneratorConsumer
 
+    validate_env(["POSTGRES_DSN"], "spec-generator")
     _svc._dep_checkers.clear()  # idempotent restart safety
 
     provider = _make_provider()

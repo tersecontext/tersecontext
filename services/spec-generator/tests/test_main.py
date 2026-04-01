@@ -56,7 +56,9 @@ def _patched_app(mock_redis, mock_store):
             return f"qdrant: {exc}"
 
     main_mod._svc._dep_checkers.clear()
-    main_mod._svc._dep_checkers.extend([check_redis, check_postgres, check_qdrant])
+    main_mod._svc.add_dep_checker(check_redis, name="redis")
+    main_mod._svc.add_dep_checker(check_postgres, name="postgres")
+    main_mod._svc.add_dep_checker(check_qdrant, name="qdrant")
 
     with patch.object(main_mod._svc, "get_redis", return_value=mock_redis):
         with TestClient(main_mod.app) as c:
@@ -91,7 +93,8 @@ def test_ready_503_redis_down(mock_store):
         resp = c.get("/ready")
 
     assert resp.status_code == 503
-    assert any("redis" in e for e in resp.json()["errors"])
+    deps = resp.json()["deps"]
+    assert any("redis" in k or "redis" in str(v) for k, v in deps.items())
 
 
 def test_ready_503_postgres_down(mock_redis, mock_store):
@@ -102,7 +105,8 @@ def test_ready_503_postgres_down(mock_redis, mock_store):
         resp = c.get("/ready")
 
     assert resp.status_code == 503
-    assert any("postgres" in e for e in resp.json()["errors"])
+    deps = resp.json()["deps"]
+    assert any("postgres" in k or "postgres" in str(v) for k, v in deps.items())
 
 
 def test_ready_503_qdrant_down(mock_redis, mock_store):
@@ -113,7 +117,8 @@ def test_ready_503_qdrant_down(mock_redis, mock_store):
         resp = c.get("/ready")
 
     assert resp.status_code == 503
-    assert any("qdrant" in e for e in resp.json()["errors"])
+    deps = resp.json()["deps"]
+    assert any("qdrant" in k or "qdrant" in str(v) for k, v in deps.items())
 
 
 def test_metrics_returns_prometheus_format(client):

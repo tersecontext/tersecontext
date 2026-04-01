@@ -1,4 +1,5 @@
 # services/graph-enricher/tests/test_main.py
+import os
 from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi.testclient import TestClient
 
@@ -28,7 +29,8 @@ def test_ready_503_redis_down(mock_redis, mock_driver):
     mock_redis.ping.side_effect = Exception("connection refused")
     with patch("app.main._make_driver", return_value=mock_driver), \
          patch("app.main._svc.get_redis", return_value=mock_redis), \
-         patch("app.consumer.run_consumer", new=_noop_consumer()):
+         patch("app.consumer.run_consumer", new=_noop_consumer()), \
+         patch.dict("os.environ", {"NEO4J_PASSWORD": "test"}):
         from app.main import app as fastapi_app
         with TestClient(fastapi_app) as c:
             resp = c.get("/ready")
@@ -43,7 +45,8 @@ def test_ready_503_neo4j_down(mock_redis):
     bad_driver.verify_connectivity.side_effect = Exception("neo4j unavailable")
     with patch("app.main._make_driver", return_value=bad_driver), \
          patch("app.main._svc.get_redis", return_value=mock_redis), \
-         patch("app.consumer.run_consumer", new=_noop_consumer()):
+         patch("app.consumer.run_consumer", new=_noop_consumer()), \
+         patch.dict("os.environ", {"NEO4J_PASSWORD": "test"}):
         from app.main import app as fastapi_app
         with TestClient(fastapi_app) as c:
             resp = c.get("/ready")

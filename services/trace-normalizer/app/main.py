@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 import redis as redis_lib
 from fastapi import FastAPI
 from fastapi.responses import PlainTextResponse
-from shared.service import ServiceBase
+from shared.service import ServiceBase, validate_env
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -61,6 +61,8 @@ async def lifespan(app: FastAPI):
     global _consumer
     from .consumer import NormalizerConsumer
 
+    if os.environ.get("NEO4J_URL"):
+        validate_env(["NEO4J_PASSWORD"], "trace-normalizer")
     _svc._dep_checkers.clear()  # idempotent restart safety
 
     r_sync = _get_redis()
@@ -82,7 +84,7 @@ async def lifespan(app: FastAPI):
                 return None
             except Exception as exc:
                 return f"neo4j: {exc}"
-        _svc.add_dep_checker(check_neo4j)
+        _svc.add_dep_checker(check_neo4j, name="neo4j", required=False)
 
     redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379")
     _consumer = NormalizerConsumer(r_sync, driver)

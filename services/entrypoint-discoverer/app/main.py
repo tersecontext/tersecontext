@@ -11,7 +11,7 @@ import redis as redis_lib
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import PlainTextResponse
 from neo4j import GraphDatabase
-from shared.service import ServiceBase
+from shared.service import ServiceBase, validate_env
 
 from .discoverer import run_discover
 from .models import DiscoverRequest, DiscoverResponse
@@ -54,6 +54,7 @@ def _get_redis() -> redis_lib.Redis:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    validate_env(["NEO4J_PASSWORD", "POSTGRES_DSN"], "entrypoint-discoverer")
     _svc._dep_checkers.clear()  # idempotent restart safety
 
     async def check_redis() -> str | None:

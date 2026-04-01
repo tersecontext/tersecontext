@@ -1,4 +1,5 @@
 # services/graph-enricher/tests/conftest.py
+import os
 import pytest
 from fastapi.testclient import TestClient
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -30,7 +31,8 @@ def _make_noop_consumer():
 def client(mock_redis, mock_driver):
     with patch("app.main._make_driver", return_value=mock_driver), \
          patch("app.main._svc.get_redis", return_value=mock_redis), \
-         patch("app.consumer.run_consumer", new=_make_noop_consumer()):
+         patch("app.consumer.run_consumer", new=_make_noop_consumer()), \
+         patch.dict("os.environ", {"NEO4J_PASSWORD": "test"}):
         from app.main import app as fastapi_app
         with TestClient(fastapi_app) as c:
             yield c

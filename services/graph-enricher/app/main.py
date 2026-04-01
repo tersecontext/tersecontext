@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.responses import PlainTextResponse
 from neo4j import GraphDatabase
-from shared.service import ServiceBase
+from shared.service import ServiceBase, validate_env
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +41,7 @@ async def lifespan(app: FastAPI):
     global _driver
     from .consumer import GraphEnricherConsumer
 
+    validate_env(["NEO4J_PASSWORD"], "graph-enricher")
     _svc._dep_checkers.clear()   # idempotent restart safety
     _driver = _make_driver()
     consumer = GraphEnricherConsumer(_driver)

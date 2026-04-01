@@ -82,7 +82,9 @@ def client(mock_redis, mock_store):
             return f"qdrant: {exc}"
 
     main_mod._svc._dep_checkers.clear()
-    main_mod._svc._dep_checkers.extend([check_redis, check_postgres, check_qdrant])
+    main_mod._svc.add_dep_checker(check_redis, name="redis")
+    main_mod._svc.add_dep_checker(check_postgres, name="postgres")
+    main_mod._svc.add_dep_checker(check_qdrant, name="qdrant")
 
     with patch.object(main_mod._svc, "get_redis", return_value=mock_redis):
         from fastapi.testclient import TestClient
