@@ -1,4 +1,4 @@
-.PHONY: up down proto verify logs ps demo-up demo
+.PHONY: up down proto verify logs ps demo-up demo link-repos install-hook
 
 # ── Infrastructure ─────────────────────────────────────────────────────────────
 
@@ -68,3 +68,16 @@ demo-up:
 
 demo: demo-up
 	@bash scripts/demo.sh
+
+# ── Repo management ─────────────────────────────────────────────────────────────
+
+link-repos:
+	@bash scripts/link-repos.sh
+
+# Install a post-commit git hook in a repo so the watcher is notified on commits.
+# Usage: make install-hook REPO=gastown
+#        make install-hook REPO=/absolute/path/to/repo
+#        WATCHER_URL=http://myhost:8091 make install-hook REPO=gastown
+install-hook:
+	@test -n "$(REPO)" || (echo "Usage: make install-hook REPO=<name|path>" && exit 1)
+	@bash scripts/install-hook.sh "$(REPO)"

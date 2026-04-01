@@ -180,7 +180,7 @@ services:
       REDIS_URL: redis://redis:6379
       REPO_ROOT: /repos
     volumes:
-      - ~/workspaces:/repos:ro
+      - ~/.tersecontext/repos:/repos:ro
     depends_on:
       redis:
         condition: service_healthy
@@ -276,7 +276,7 @@ services:
       WATCHER_URL: http://localhost:8091
       ALLOWED_REPO_ROOTS: /repos
     volumes:
-      - ~/workspaces:/repos
+      - ~/.tersecontext/repos:/repos:ro
     depends_on:
       redis:
         condition: service_healthy
@@ -341,7 +341,7 @@ services:
     ports:
       - "8094:8080"
     volumes:
-      - ~/workspaces:/repos:ro
+      - ~/.tersecontext/repos:/repos:ro
     environment:
       REDIS_URL: redis://redis:6379
       INSTRUMENTER_URL: http://instrumenter:8080
@@ -462,7 +462,7 @@ services:
     ports:
       - "8098:8098"
     volumes:
-      - ~/workspaces:/repos:ro
+      - ~/.tersecontext/repos:/repos:ro
       - /tmp/go-trace-sessions:/tmp/sessions
       - ./services/tracert:/app/tracert:ro
     environment:

@@ -82,14 +82,6 @@ class IndexRequest(BaseModel):
         return _validate_repo_path(v)
 
 
-class InstallHookRequest(BaseModel):
-    repo_path: str
-
-    @field_validator("repo_path")
-    @classmethod
-    def check_repo_path(cls, v: str) -> str:
-        return _validate_repo_path(v)
-
 
 class StatusResponse(BaseModel):
     repo: str
