@@ -1,6 +1,7 @@
 package indexer
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -41,7 +42,9 @@ func TestIndexRepo_InvokesZoektIndex(t *testing.T) {
 func TestIndexRepo_ErrorOnNonZeroExit(t *testing.T) {
 	tmpDir := t.TempDir()
 	fakeScript := filepath.Join(tmpDir, "zoekt-index")
-	os.WriteFile(fakeScript, []byte("#!/bin/sh\nexit 1\n"), 0755)
+	if err := os.WriteFile(fakeScript, []byte("#!/bin/sh\nexit 1\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
 	origPath := os.Getenv("PATH")
 	os.Setenv("PATH", tmpDir+":"+origPath)
 	defer os.Setenv("PATH", origPath)
@@ -52,11 +55,7 @@ func TestIndexRepo_ErrorOnNonZeroExit(t *testing.T) {
 		t.Fatal("expected error on non-zero exit, got nil")
 	}
 	var exitErr *exec.ExitError
-	if !errorIs(err, &exitErr) {
+	if !errors.As(err, &exitErr) {
 		t.Errorf("expected ExitError, got %T: %v", err, err)
 	}
-}
-
-func errorIs(err error, target interface{}) bool {
-	return err != nil
 }
