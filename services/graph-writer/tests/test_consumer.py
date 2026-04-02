@@ -356,6 +356,40 @@ async def test_node_consumer_transient_error_no_ack():
 
 
 @pytest.mark.asyncio
+async def test_run_repo_indexed_consumer_writes_readiness_key():
+    """Consumer reads stream:repo-indexed and writes a readiness key."""
+    from app.consumer import run_repo_indexed_consumer
+
+    call_count = 0
+
+    async def fake_xreadgroup(**kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return [
+                (b"stream:repo-indexed", [
+                    (b"1-0", {b"repo": b"my-repo", b"path": b"/repos/my-repo", b"commit_sha": b"abc123"})
+                ])
+            ]
+        raise asyncio.CancelledError()
+
+    mock_redis = AsyncMock()
+    mock_redis.xreadgroup = fake_xreadgroup
+    mock_redis.xgroup_create = AsyncMock(return_value=True)
+    mock_redis.xack = AsyncMock()
+    mock_redis.aclose = AsyncMock()
+
+    with patch("app.consumer.aioredis") as mock_aioredis:
+        mock_aioredis.from_url.return_value = mock_redis
+        with pytest.raises(asyncio.CancelledError):
+            await run_repo_indexed_consumer(settle_secs=0)
+
+    mock_redis.set.assert_called_once_with(
+        "graph-writer:repo-ready:my-repo:abc123", "1", ex=3600
+    )
+
+
+@pytest.mark.asyncio
 async def test_cache_coordination_edge_then_node():
     """End-to-end: edge consumer populates cache, node consumer reads it."""
     parsed_event = _make_parsed_file_event(commit_sha="coordsha", file_path="lib/x.py")

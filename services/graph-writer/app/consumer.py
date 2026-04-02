@@ -86,6 +86,59 @@ async def run_edge_consumer(driver) -> None:
         await r.aclose()
 
 
+STREAM_REPO_INDEXED = "stream:repo-indexed"
+GROUP_REPO_INDEXED = "graph-writer-repo-indexed-group"
+
+
+async def run_repo_indexed_consumer(settle_secs: float | None = None) -> None:
+    """Consumes stream:repo-indexed and writes a repo-ready key after a settle delay."""
+    if settle_secs is None:
+        settle_secs = float(os.environ.get("PIPELINE_SETTLE_SECS", "5"))
+    url = os.environ.get("REDIS_URL", "redis://localhost:6379")
+    r = aioredis.from_url(url)
+    consumer_name = f"graph-writer-{socket.gethostname()}"
+    try:
+        try:
+            await r.xgroup_create(STREAM_REPO_INDEXED, GROUP_REPO_INDEXED, id="$", mkstream=True)
+        except redis.exceptions.ResponseError as exc:
+            if "BUSYGROUP" not in str(exc):
+                raise
+
+        logger.info("Repo-indexed consumer started: group=%s", GROUP_REPO_INDEXED)
+
+        while True:
+            try:
+                messages = await r.xreadgroup(
+                    groupname=GROUP_REPO_INDEXED,
+                    consumername=consumer_name,
+                    streams={STREAM_REPO_INDEXED: ">"},
+                    count=10,
+                    block=1000,
+                )
+                for _stream, events in (messages or []):
+                    for msg_id, data in events:
+                        try:
+                            repo = (data.get(b"repo") or data.get("repo", b"")).decode()
+                            commit_sha = (data.get(b"commit_sha") or data.get("commit_sha", b"")).decode()
+                            if repo and commit_sha:
+                                if settle_secs > 0:
+                                    await asyncio.sleep(settle_secs)
+                                key = f"graph-writer:repo-ready:{repo}:{commit_sha}"
+                                await r.set(key, "1", ex=3600)
+                                logger.info("Wrote repo-ready key: %s", key)
+                            await r.xack(STREAM_REPO_INDEXED, GROUP_REPO_INDEXED, msg_id)
+                        except asyncio.CancelledError:
+                            raise
+                        except Exception as exc:
+                            logger.error("Repo-indexed consumer error: %s", exc)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.error("Repo-indexed consumer loop error: %s", exc)
+    finally:
+        await r.aclose()
+
+
 async def run_node_consumer(driver) -> None:
     url = os.environ.get("REDIS_URL", "redis://localhost:6379")
     r = aioredis.from_url(url)

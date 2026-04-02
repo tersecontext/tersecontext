@@ -37,17 +37,19 @@ def _make_driver():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _driver
-    from .consumer import run_edge_consumer, run_node_consumer
+    from .consumer import run_edge_consumer, run_node_consumer, run_repo_indexed_consumer
 
     _driver = _make_driver()
     edge_task = asyncio.create_task(run_edge_consumer(_driver))
     node_task = asyncio.create_task(run_node_consumer(_driver))
+    repo_indexed_task = asyncio.create_task(run_repo_indexed_consumer())
     try:
         yield
     finally:
         edge_task.cancel()
         node_task.cancel()
-        for task in (edge_task, node_task):
+        repo_indexed_task.cancel()
+        for task in (edge_task, node_task, repo_indexed_task):
             try:
                 await task
             except asyncio.CancelledError:
