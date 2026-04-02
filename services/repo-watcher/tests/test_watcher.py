@@ -104,8 +104,6 @@ def test_process_commit_added_file_emits_added_nodes(sample_repo):
 
 def test_process_commit_emits_repo_indexed(sample_repo):
     """After all file-changed events, process_commit emits one stream:repo-indexed entry."""
-    import subprocess
-    from unittest.mock import MagicMock
     from app.watcher import process_commit
 
     sha = subprocess.run(
@@ -127,3 +125,39 @@ def test_process_commit_emits_repo_indexed(sample_repo):
     assert payload["commit_sha"] == sha
     assert "path" in payload
     assert payload["path"] == str(sample_repo)
+
+
+def test_process_commit_emits_repo_indexed_incremental(sample_repo):
+    """Incremental path also emits stream:repo-indexed after file-changed events."""
+    from app.watcher import process_commit
+
+    # Create a second commit so we have a prev→current diff
+    (sample_repo / "new_file.py").write_text("x = 1\n")
+    subprocess.run(["git", "add", "new_file.py"], cwd=sample_repo, check=True)
+    subprocess.run(
+        ["git", "commit", "--no-gpg-sign", "-m", "add file"],
+        cwd=sample_repo, check=True,
+        env={**__import__("os").environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+             "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"},
+    )
+    prev_sha = subprocess.run(
+        ["git", "rev-parse", "HEAD~1"], cwd=sample_repo,
+        capture_output=True, text=True, check=True
+    ).stdout.strip()
+    current_sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=sample_repo,
+        capture_output=True, text=True, check=True
+    ).stdout.strip()
+
+    mock_redis = MagicMock()
+    process_commit(mock_redis, str(sample_repo), prev_sha, current_sha)
+
+    repo_indexed_calls = [
+        c for c in mock_redis.xadd.call_args_list
+        if c[0][0] == "stream:repo-indexed"
+    ]
+    assert len(repo_indexed_calls) == 1
+    payload = repo_indexed_calls[0][0][1]
+    assert payload["repo"] == sample_repo.name
+    assert payload["commit_sha"] == current_sha
+    assert "path" in payload
