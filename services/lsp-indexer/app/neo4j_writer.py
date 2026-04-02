@@ -20,7 +20,8 @@ def write_lsp_edges(driver, edges: list[tuple[str, str]]) -> int:
     with driver.session() as session:
         for src, tgt in edges:
             try:
-                session.run(WRITE_EDGE_QUERY, src=src, tgt=tgt)
+                result = session.run(WRITE_EDGE_QUERY, src=src, tgt=tgt)
+                result.consume()
                 written += 1
             except Exception as exc:
                 logger.warning("Failed to write lsp edge %s->%s: %s", src, tgt, exc)

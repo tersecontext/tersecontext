@@ -104,7 +104,7 @@ async def index_repo(repo: str, repo_path: str, language_servers: dict[str, list
     """Run LSP indexing for all detected languages in repo_path.
     Blocking LSP/subprocess work is offloaded to a thread pool via run_in_executor.
     Returns total count of edges written."""
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, _index_repo_sync, repo, repo_path, language_servers, driver)
 
 
@@ -148,7 +148,11 @@ def _index_repo_sync(repo: str, repo_path: str, language_servers: dict[str, list
                         calls = session.call_hierarchy_outgoing(abs_path, line_num, 0)
                         for call in calls:
                             src_id = resolve_stable_id(driver, repo, rel_path, line_num)
-                            tgt_id = resolve_stable_id(driver, repo, call["file"], call["line"])
+                            tgt_file = call["file"]
+                            # Strip absolute repo_path prefix to get repo-relative path
+                            if tgt_file.startswith(repo_path):
+                                tgt_file = tgt_file[len(repo_path):].lstrip("/")
+                            tgt_id = resolve_stable_id(driver, repo, tgt_file, call["line"])
                             if src_id and tgt_id and src_id != tgt_id:
                                 edges.append((src_id, tgt_id))
                 except Exception as exc:
