@@ -58,13 +58,16 @@ func (z *ZoektSearcher) Search(ctx context.Context, keywords, symbols []string, 
 
 	q := buildZoektQuery(keywords, symbols)
 
-	body, _ := json.Marshal(map[string]interface{}{
+	body, err := json.Marshal(map[string]interface{}{
 		"Q": q,
 		"Opts": map[string]interface{}{
 			"Repo":          repo,
 			"MaxMatchCount": limit * 2,
 		},
 	})
+	if err != nil {
+		return nil, fmt.Errorf("zoekt marshal request: %w", err)
+	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, z.zoektURL+"/search", bytes.NewReader(body))
 	if err != nil {
@@ -164,22 +167,26 @@ func (r *neo4jNodeResolver) Resolve(ctx context.Context, matches []fileLineMatch
 		return nil, fmt.Errorf("neo4j resolve: %w", err)
 	}
 
-	// Deduplicate by stable_id, keeping max zoekt_score.
-	seen := map[string]float64{}
+	// Deduplicate by stable_id.
+	seen := map[string]bool{}
 	var nodes []RankedNode
 	for result.Next(ctx) {
 		rec := result.Record()
-		sid, _ := rec.Get("stable_id")
-		name, _ := rec.Get("name")
-		typ, _ := rec.Get("type")
-		score, _ := rec.Get("zoekt_score")
-		s := sid.(string)
-		sc, _ := score.(float64)
-		if prev, exists := seen[s]; !exists || sc > prev {
-			seen[s] = sc
-			if !exists {
-				nodes = append(nodes, RankedNode{StableID: s, Name: name.(string), Type: typ.(string), Source: "graph"})
-			}
+		sid, ok1 := rec.Get("stable_id")
+		name, ok2 := rec.Get("name")
+		typ, ok3 := rec.Get("type")
+		if !ok1 || !ok2 || !ok3 || sid == nil || name == nil || typ == nil {
+			continue
+		}
+		s, ok := sid.(string)
+		n, ok2 := name.(string)
+		t, ok3 := typ.(string)
+		if !ok || !ok2 || !ok3 {
+			continue
+		}
+		if !seen[s] {
+			seen[s] = true
+			nodes = append(nodes, RankedNode{StableID: s, Name: n, Type: t, Source: "graph"})
 		}
 	}
 	if err := result.Err(); err != nil {
