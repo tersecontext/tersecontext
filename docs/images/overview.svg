@@ -66,17 +66,27 @@
   <text x="195" y="124" text-anchor="middle" fill="#5a8ab0" font-size="8.5">nodes → vectors</text>
   <line x1="234" y1="113" x2="248" y2="113" stroke="#4a9eff" stroke-width="1.5" marker-end="url(#arr-blue)"/>
 
-  <!-- graph-builder -->
+  <!-- graph-writer -->
   <rect x="248" y="94" width="84" height="38" rx="5" fill="#1a3a5c" stroke="#3a7abf" stroke-width="1"/>
-  <text x="290" y="110" text-anchor="middle" fill="#7ec8ff" font-size="9.5" font-weight="600">graph-builder</text>
+  <text x="290" y="110" text-anchor="middle" fill="#7ec8ff" font-size="9.5" font-weight="600">graph-writer</text>
   <text x="290" y="124" text-anchor="middle" fill="#5a8ab0" font-size="8.5">edges + calls</text>
 
-  <!-- symbol-resolver (below) -->
-  <rect x="248" y="140" width="84" height="28" rx="5" fill="#12263a" stroke="#2a5870" stroke-width="1"/>
-  <text x="290" y="158" text-anchor="middle" fill="#4a7a9a" font-size="8.5">symbol-resolver</text>
+  <!-- stream:repo-indexed fan-out -->
+  <line x1="290" y1="132" x2="290" y2="136" stroke="#2a4a60" stroke-width="1" stroke-dasharray="2,2"/>
+  <line x1="268" y1="136" x2="352" y2="136" stroke="#2a4a60" stroke-width="1" stroke-dasharray="2,2"/>
+  <line x1="268" y1="136" x2="268" y2="139" stroke="#2a4a60" stroke-width="1.5" marker-end="url(#arr-dim)"/>
+  <line x1="352" y1="136" x2="352" y2="139" stroke="#2a4a60" stroke-width="1.5" marker-end="url(#arr-dim)"/>
+
+  <!-- lsp-indexer (triggered via stream:repo-indexed) -->
+  <rect x="236" y="140" width="64" height="28" rx="5" fill="#12263a" stroke="#2a5870" stroke-width="1"/>
+  <text x="268" y="157" text-anchor="middle" fill="#4a7a9a" font-size="8.5">lsp-indexer</text>
+
+  <!-- zoekt-indexer (triggered via stream:repo-indexed) -->
+  <rect x="308" y="140" width="80" height="28" rx="5" fill="#12263a" stroke="#2a5870" stroke-width="1"/>
+  <text x="348" y="157" text-anchor="middle" fill="#4a7a9a" font-size="8.5">zoekt-indexer</text>
 
   <!-- static caption -->
-  <text x="214" y="175" text-anchor="middle" fill="#2a5070" font-size="8.5">what code exists · who calls what · semantic meaning</text>
+  <text x="214" y="178" text-anchor="middle" fill="#2a5070" font-size="8.5">what code exists · who calls what · LSP cross-refs · zoekt search</text>
 
   <!-- ── SHARED STORES BAND ── -->
   <rect x="24" y="196" width="380" height="102" rx="8" fill="url(#stores-grad)" stroke="#252840" stroke-width="1"/>
@@ -127,7 +137,6 @@
   <line x1="103" y1="132" x2="76" y2="218" stroke="#2a5878" stroke-width="1" stroke-dasharray="3,2"/>
   <line x1="195" y1="132" x2="166" y2="218" stroke="#2a5878" stroke-width="1" stroke-dasharray="3,2"/>
   <line x1="290" y1="132" x2="280" y2="218" stroke="#2a5878" stroke-width="1" stroke-dasharray="3,2"/>
-  <line x1="310" y1="132" x2="330" y2="218" stroke="#2a5878" stroke-width="1" stroke-dasharray="3,2"/>
 
   <!-- ── DYNAMIC ANALYSIS LANE ── -->
   <rect x="24" y="308" width="380" height="260" rx="8" fill="url(#dynamic-grad)" stroke="#5a2a80" stroke-width="1"/>

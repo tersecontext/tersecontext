@@ -63,6 +63,7 @@ message SubgraphNode {
   repeated string raises_observed = 13;
   repeated string side_effects    = 14;
   string behavior_spec   = 15;
+  string file_path       = 16;
 }
 
 message SubgraphEdge {

@@ -17,6 +17,7 @@ type BFSState struct {
 	Hop            int
 	ParentID       string
 	EdgeType       string
+	FilePath       string
 	Provenance     string
 	ObservedCalls  int32
 	AvgLatencyMs   float64

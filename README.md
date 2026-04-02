@@ -2,7 +2,7 @@
 
 **Minimum Context. Maximum Understanding.**
 
-TerseContext is a code indexing system that produces the smallest, highest-confidence context window for LLMs working with codebases. It combines static analysis (AST/graph) with dynamic analysis (runtime traces) to give LLMs exactly what they need — and nothing they don't. Supports **Python** and **Go**.
+TerseContext is a code indexing system that produces the smallest, highest-confidence context window for LLMs working with codebases. It combines static analysis (AST/graph) with dynamic analysis (runtime traces) to give LLMs exactly what they need — and nothing they don't. Supports **Python**, **Go**, and **TypeScript**.
 
 ## What the output looks like
 
@@ -62,6 +62,8 @@ The context doc is plain text — paste it directly before your question in any 
 - Merges static and dynamic signals with provenance tags (static / spec.N% / runtime-only)
 - Serializes the minimum sufficient subgraph for any given query, within a token budget
 
+For the full technical deep-dive — data flows, store schemas, output format, service internals — see [docs/architecture.md](docs/architecture.md).
+
 ## What's runnable today
 
 ```bash
@@ -71,7 +73,7 @@ make demo  # indexes a bundled sample repo and runs an example query (~5 minutes
 
 | Component | Status |
 |-----------|--------|
-| Static pipeline (repo-watcher → parser → graph-writer → symbol-resolver → embedder → vector-writer) | ✅ Functional |
+| Static pipeline (repo-watcher → parser → graph-writer → lsp-indexer + zoekt-indexer, embedder → vector-writer) | ✅ Functional |
 | Query pipeline (query-understander → dual-retriever → subgraph-expander → serializer → api-gateway) | ✅ Functional |
 | Dynamic pipeline (entrypoint-discoverer → instrumenter → trace-runner → trace-normalizer → graph-enricher → spec-generator) | ✅ Built, query improvements in progress |
 | Web UI (repo selector, question input, gate question config) | 🔧 In progress |
@@ -81,7 +83,7 @@ The static + query pipeline is the dependency used by Breakdown and Fracture. St
 
 ## What's built
 
-**Static pipeline** — repo-watcher → parser → graph-writer → symbol-resolver → embedder → vector-writer
+**Static pipeline** — repo-watcher → parser → graph-writer → lsp-indexer (LSP cross-refs → Neo4j) + zoekt-indexer (trigram search), embedder → vector-writer
 
 **Dynamic pipeline** — entrypoint-discoverer → instrumenter → trace-runner → trace-normalizer → graph-enricher → spec-generator
 
@@ -140,7 +142,6 @@ curl -X POST http://localhost:8090/query \
 - This is the core structural gap. Semantic queries about runtime behaviour (data inflows, external connections) return lexical noise until the trace pipeline is producing `BehaviorSpec` entries with `SIDE_EFFECTS` blocks. Once the trace fix above lands, confirm that `DB READ`, `HTTP IN`, and `CACHE GET` annotations appear in specs and that the retriever surfaces them over lexically-matched-but-wrong nodes.
 
 **Retrieval quality: query improvements**
-- `buildFullTextQuery` in `neo4j.go:29` produces flat OR across all query terms. Add phrase matching and field weighting so "external connections data inflows" does not match every node that contains the word "external".
 - BFS direction: the query understander classifies "data inflows" as `flow`, which runs BFS forward through CALLS edges. Inflow queries need entry point lookup, not forward traversal. Reclassify or add a `inflow` query type that walks CALLED_BY edges instead.
 - Token budget constants (`tokensSeedWithoutSpec = 120`) are undersized for real functions. Replace with measured estimates or a lightweight token counter.
 

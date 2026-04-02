@@ -17,12 +17,13 @@ func (c *Client) HydrateSeeds(ctx context.Context, stableIDs []string) (map[stri
 	result, err := session.Run(ctx, `
 		MATCH (n:Node)
 		WHERE n.stable_id IN $stable_ids AND n.active = true
-		RETURN n.stable_id AS stable_id,
-		       n.name      AS name,
-		       n.type      AS type,
-		       n.signature AS signature,
-		       n.docstring AS docstring,
-		       n.body      AS body`, map[string]interface{}{"stable_ids": stableIDs})
+		RETURN n.stable_id  AS stable_id,
+		       n.name       AS name,
+		       n.type       AS type,
+		       n.signature  AS signature,
+		       n.docstring  AS docstring,
+		       n.body       AS body,
+		       n.file_path  AS file_path`, map[string]interface{}{"stable_ids": stableIDs})
 	if err != nil {
 		return nil, fmt.Errorf("neo4j HydrateSeeds: %w", err)
 	}
@@ -49,6 +50,9 @@ func (c *Client) HydrateSeeds(ctx context.Context, stableIDs []string) (map[stri
 		if v, ok := rec.Get("body"); ok && v != nil {
 			n.Body = v.(string)
 		}
+		if v, ok := rec.Get("file_path"); ok && v != nil {
+			n.FilePath = v.(string)
+		}
 		out[n.StableID] = n
 	}
 	return out, result.Err()
@@ -67,46 +71,49 @@ func (c *Client) FetchNeighbors(ctx context.Context, stableIDs []string, queryTy
 			MATCH (caller:Node)-[r:CALLS|TESTED_BY]->(seed:Node)
 			WHERE seed.stable_id IN $stable_ids
 			  AND caller.active = true
-			RETURN seed.stable_id   AS parent_id,
-			       caller.stable_id AS stable_id,
-			       caller.name      AS name,
-			       caller.type      AS type,
-			       caller.signature AS signature,
-			       caller.docstring AS docstring,
-			       caller.body      AS body,
-			       type(r)          AS edge_type,
-			       r.source         AS provenance,
+			RETURN seed.stable_id    AS parent_id,
+			       caller.stable_id  AS stable_id,
+			       caller.name       AS name,
+			       caller.type       AS type,
+			       caller.signature  AS signature,
+			       caller.docstring  AS docstring,
+			       caller.body       AS body,
+			       caller.file_path  AS file_path,
+			       type(r)           AS edge_type,
+			       r.source          AS provenance,
 			       r.frequency_ratio AS frequency_ratio`
 	case "flow":
 		cypher = `
 			MATCH (seed:Node)-[r:CALLS|IMPORTS|INHERITS]->(neighbor:Node)
 			WHERE seed.stable_id IN $stable_ids
 			  AND neighbor.active = true
-			RETURN seed.stable_id     AS parent_id,
-			       neighbor.stable_id AS stable_id,
-			       neighbor.name      AS name,
-			       neighbor.type      AS type,
-			       neighbor.signature AS signature,
-			       neighbor.docstring AS docstring,
-			       neighbor.body      AS body,
-			       type(r)            AS edge_type,
-			       r.source           AS provenance,
-			       r.frequency_ratio  AS frequency_ratio`
+			RETURN seed.stable_id       AS parent_id,
+			       neighbor.stable_id   AS stable_id,
+			       neighbor.name        AS name,
+			       neighbor.type        AS type,
+			       neighbor.signature   AS signature,
+			       neighbor.docstring   AS docstring,
+			       neighbor.body        AS body,
+			       neighbor.file_path   AS file_path,
+			       type(r)              AS edge_type,
+			       r.source             AS provenance,
+			       r.frequency_ratio    AS frequency_ratio`
 	case "lookup":
 		cypher = `
 			MATCH (seed:Node)-[r:DEFINES|IMPORTS|INHERITS]->(neighbor:Node)
 			WHERE seed.stable_id IN $stable_ids
 			  AND neighbor.active = true
-			RETURN seed.stable_id     AS parent_id,
-			       neighbor.stable_id AS stable_id,
-			       neighbor.name      AS name,
-			       neighbor.type      AS type,
-			       neighbor.signature AS signature,
-			       neighbor.docstring AS docstring,
-			       neighbor.body      AS body,
-			       type(r)            AS edge_type,
-			       r.source           AS provenance,
-			       r.frequency_ratio  AS frequency_ratio`
+			RETURN seed.stable_id       AS parent_id,
+			       neighbor.stable_id   AS stable_id,
+			       neighbor.name        AS name,
+			       neighbor.type        AS type,
+			       neighbor.signature   AS signature,
+			       neighbor.docstring   AS docstring,
+			       neighbor.body        AS body,
+			       neighbor.file_path   AS file_path,
+			       type(r)              AS edge_type,
+			       r.source             AS provenance,
+			       r.frequency_ratio    AS frequency_ratio`
 	default:
 		return nil, fmt.Errorf("unknown query_type: %q", queryType)
 	}
@@ -140,6 +147,9 @@ func (c *Client) FetchNeighbors(ctx context.Context, stableIDs []string, queryTy
 		}
 		if v, ok := rec.Get("body"); ok && v != nil {
 			n.Body = v.(string)
+		}
+		if v, ok := rec.Get("file_path"); ok && v != nil {
+			n.FilePath = v.(string)
 		}
 		if v, ok := rec.Get("edge_type"); ok && v != nil {
 			n.EdgeType = v.(string)

@@ -20,7 +20,11 @@ func RenderRegistry(buf *strings.Builder, nodes []*querypb.SubgraphNode, ids map
 			sig = n.Name
 		}
 		pill := provenancePill(n)
-		fmt.Fprintf(buf, "%-12s  %-50s  %s\n", idCol, sig, pill)
+		if n.FilePath != "" {
+			fmt.Fprintf(buf, "%-12s  %-50s  %-40s  %s\n", idCol, sig, n.FilePath, pill)
+		} else {
+			fmt.Fprintf(buf, "%-12s  %-50s  %s\n", idCol, sig, pill)
+		}
 	}
 	buf.WriteString("\n")
 }

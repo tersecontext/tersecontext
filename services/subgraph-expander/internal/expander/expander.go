@@ -133,6 +133,7 @@ func (e *Expander) Expand(
 			Signature:      n.Signature,
 			Docstring:      n.Docstring,
 			Body:           n.Body,
+			FilePath:       n.FilePath,
 			Score:          n.Score,
 			Hop:            int32(n.Hop),
 			Provenance:     n.Provenance,
