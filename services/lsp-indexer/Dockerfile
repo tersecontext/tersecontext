@@ -11,7 +11,8 @@ ENV PATH="/usr/local/go/bin:$PATH"
 
 # Install language servers
 RUN npm install -g pyright typescript-language-server typescript && \
-    go install golang.org/x/tools/gopls@latest
+    go install golang.org/x/tools/gopls@latest && \
+    cp /root/go/bin/gopls /usr/local/bin/gopls
 ENV PATH="/root/go/bin:$PATH"
 
 RUN addgroup --system app && adduser --system --ingroup app app
