@@ -47,11 +47,17 @@ func main() {
 		for {
 			resp, err := http.Get(zoektURL + "/healthz")
 			if err == nil && resp.StatusCode == http.StatusOK {
-				ready.Store(true)
-				slog.Info("zoekt-webserver is reachable")
-				return
+				resp.Body.Close()
+				if !ready.Load() {
+					ready.Store(true)
+					slog.Info("zoekt-webserver is reachable")
+				}
+			} else {
+				if ready.Load() {
+					ready.Store(false)
+					slog.Warn("zoekt-webserver unreachable", "url", zoektURL)
+				}
 			}
-			slog.Info("waiting for zoekt-webserver", "url", zoektURL)
 			time.Sleep(2 * time.Second)
 		}
 	}()
@@ -91,7 +97,9 @@ func main() {
 			for _, msg := range msgs {
 				for _, m := range msg.Messages {
 					repo, _ := m.Values["repo"].(string)
-					if repo != "" {
+					if repo == "" {
+						slog.Warn("missing repo field in message, skipping", "stream", streamRepoIndexed, "id", m.ID)
+					} else {
 						slog.Info("full re-index", "repo", repo)
 						if err := idx.IndexRepo(repo); err != nil {
 							slog.Error("index repo", "repo", repo, "error", err)
@@ -118,7 +126,9 @@ func main() {
 			for _, msg := range msgs {
 				for _, m := range msg.Messages {
 					repo, _ := m.Values["repo"].(string)
-					if repo != "" {
+					if repo == "" {
+						slog.Warn("missing repo field in message, skipping", "stream", streamFileChanged, "id", m.ID)
+					} else {
 						deb.Trigger(repo, func(r string) {
 							slog.Info("debounced re-index", "repo", r)
 							if err := idx.IndexRepo(r); err != nil {
@@ -147,5 +157,7 @@ func main() {
 	<-sigCh
 	slog.Info("shutting down")
 	cancel()
-	httpServer.Shutdown(context.Background())
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer shutdownCancel()
+	httpServer.Shutdown(shutdownCtx)
 }
