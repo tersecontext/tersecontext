@@ -49,7 +49,7 @@ type mockGraphSearcher struct {
 	delay time.Duration
 }
 
-func (m *mockGraphSearcher) Search(ctx context.Context, query string, symbols []string, repo string, limit int) ([]RankedNode, error) {
+func (m *mockGraphSearcher) Search(ctx context.Context, keywords []string, symbols []string, repo string, limit int) ([]RankedNode, error) {
 	if m.delay > 0 {
 		select {
 		case <-time.After(m.delay):

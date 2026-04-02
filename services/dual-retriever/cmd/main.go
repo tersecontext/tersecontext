@@ -40,6 +40,7 @@ func main() {
 	}
 	qdrantURL := env("QDRANT_URL", "http://qdrant:6333")
 	embedderURL := env("EMBEDDER_URL", "http://embedder:8080")
+	zoektURL := env("ZOEKT_URL", "http://zoekt:6070")
 
 	ctx := context.Background()
 	var ready atomic.Bool
@@ -55,7 +56,7 @@ func main() {
 	// --- Build retriever ---
 	embedder := retriever.NewHTTPEmbedder(embedderURL, nil)
 	vectorSearcher := retriever.NewQdrantSearcher(qdrantURL, "nodes", nil)
-	graphSearcher := retriever.NewNeo4jSearcher(neo4jDriver)
+	graphSearcher := retriever.NewZoektSearcher(zoektURL, neo4jDriver, nil)
 	ret := retriever.NewRetriever(embedder, vectorSearcher, graphSearcher)
 
 	// --- gRPC server ---

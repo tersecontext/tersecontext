@@ -66,8 +66,7 @@ func (r *Retriever) Retrieve(ctx context.Context, embedQuery string, keywords, s
 	if runGraph {
 		go func() {
 			gStart := time.Now()
-			query := buildFullTextQuery(keywords, symbols)
-			nodes, err := r.graph.Search(ctx, query, symbols, repo, limit)
+			nodes, err := r.graph.Search(ctx, keywords, symbols, repo, limit)
 			slog.Info("graph search complete", "graph_ms", time.Since(gStart).Milliseconds(), "graph_count", len(nodes))
 			graphCh <- retrievalResult{nodes: nodes, source: "graph", err: err}
 		}()

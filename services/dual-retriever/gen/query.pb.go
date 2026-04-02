@@ -406,6 +406,7 @@ type SubgraphNode struct {
 	RaisesObserved []string               `protobuf:"bytes,13,rep,name=raises_observed,json=raisesObserved,proto3" json:"raises_observed,omitempty"`
 	SideEffects    []string               `protobuf:"bytes,14,rep,name=side_effects,json=sideEffects,proto3" json:"side_effects,omitempty"`
 	BehaviorSpec   string                 `protobuf:"bytes,15,opt,name=behavior_spec,json=behaviorSpec,proto3" json:"behavior_spec,omitempty"`
+	FilePath       string                 `protobuf:"bytes,16,opt,name=file_path,json=filePath,proto3" json:"file_path,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -541,6 +542,13 @@ func (x *SubgraphNode) GetSideEffects() []string {
 func (x *SubgraphNode) GetBehaviorSpec() string {
 	if x != nil {
 		return x.BehaviorSpec
+	}
+	return ""
+}
+
+func (x *SubgraphNode) GetFilePath() string {
+	if x != nil {
+		return x.FilePath
 	}
 	return ""
 }
