@@ -125,3 +125,5 @@ def test_process_commit_emits_repo_indexed(sample_repo):
     payload = repo_indexed_calls[0][0][1]
     assert payload["repo"] == sample_repo.name
     assert payload["commit_sha"] == sha
+    assert "path" in payload
+    assert payload["path"] == str(sample_repo)
