@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"os"
@@ -125,7 +126,19 @@ func main() {
 			}
 			for _, msg := range msgs {
 				for _, m := range msg.Messages {
+					// Try flat "repo" field first, fall back to parsing "event" JSON
 					repo, _ := m.Values["repo"].(string)
+					if repo == "" {
+						// stream:file-changed wraps data in "event" JSON field
+						if eventStr, ok := m.Values["event"].(string); ok {
+							var ev struct {
+								Repo string `json:"repo"`
+							}
+							if err := json.Unmarshal([]byte(eventStr), &ev); err == nil {
+								repo = ev.Repo
+							}
+						}
+					}
 					if repo == "" {
 						slog.Warn("missing repo field in message, skipping", "stream", streamFileChanged, "id", m.ID)
 					} else {
