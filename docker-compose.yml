@@ -45,6 +45,7 @@ volumes:
       type: none
       o: bind
       device: ./data/ollama
+  zoekt-index:
 
 services:
   neo4j:
@@ -232,28 +233,6 @@ services:
       dockerfile: graph-enricher/Dockerfile
     ports:
       - "8096:8080"
-    environment:
-      REDIS_URL: redis://redis:6379
-      NEO4J_URL: bolt://neo4j:7687
-      NEO4J_USER: neo4j
-      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-localpassword}
-    depends_on:
-      redis:
-        condition: service_healthy
-      neo4j:
-        condition: service_healthy
-    networks:
-      - tersecontext
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  symbol-resolver:
-    build: ./services/symbol-resolver
-    ports:
-      - "8082:8080"
     environment:
       REDIS_URL: redis://redis:6379
       NEO4J_URL: bolt://neo4j:7687
@@ -598,6 +577,42 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+
+  zoekt-webserver:
+    image: sourcegraph/zoekt-webserver:latest
+    ports: ["6070:6070"]
+    volumes:
+      - zoekt-index:/data/index
+    networks: [tersecontext]
+
+  zoekt-indexer:
+    build: ./services/zoekt-indexer
+    ports: ["8101:8101"]
+    volumes:
+      - zoekt-index:/data/index
+      - "${REPOS_DIR}:/repos:ro"
+    environment:
+      - REDIS_URL
+      - REPOS_DIR
+      - ZOEKT_INDEX_DIR=/data/index
+      - ZOEKT_URL=http://zoekt-webserver:6070
+    depends_on: [redis, zoekt-webserver]
+    networks: [tersecontext]
+
+  lsp-indexer:
+    build: ./services/lsp-indexer
+    ports: ["8102:8102"]
+    volumes:
+      - "${REPOS_DIR}:/repos:ro"
+    environment:
+      - REDIS_URL
+      - NEO4J_URL
+      - NEO4J_USER
+      - NEO4J_PASSWORD
+      - REPOS_DIR
+      - 'LANGUAGE_SERVERS={"py":["pyright-langserver","--stdio"],"go":["gopls"],"ts":["typescript-language-server","--stdio"]}'
+    depends_on: [redis, neo4j]
+    networks: [tersecontext]
 
   prometheus:
     image: prom/prometheus:latest
