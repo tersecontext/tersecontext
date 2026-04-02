@@ -8,11 +8,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from app.consumer import (
     GROUP_EDGES,
     GROUP_NODES,
+    GROUP_REPO_INDEXED,
     STREAM_EMBEDDED,
     STREAM_PARSED,
+    STREAM_REPO_INDEXED,
     _parsed_file_cache,
     run_edge_consumer,
     run_node_consumer,
+    run_repo_indexed_consumer,
 )
 from app.models import (
     EmbeddedNode,
@@ -358,8 +361,6 @@ async def test_node_consumer_transient_error_no_ack():
 @pytest.mark.asyncio
 async def test_run_repo_indexed_consumer_writes_readiness_key():
     """Consumer reads stream:repo-indexed and writes a readiness key."""
-    from app.consumer import run_repo_indexed_consumer
-
     call_count = 0
 
     async def fake_xreadgroup(**kwargs):
@@ -368,7 +369,7 @@ async def test_run_repo_indexed_consumer_writes_readiness_key():
         if call_count == 1:
             return [
                 (b"stream:repo-indexed", [
-                    (b"1-0", {b"repo": b"my-repo", b"path": b"/repos/my-repo", b"commit_sha": b"abc123"})
+                    (b"1-0", {b"repo": b"my-repo", b"commit_sha": b"abc123"})
                 ])
             ]
         raise asyncio.CancelledError()
@@ -386,6 +387,9 @@ async def test_run_repo_indexed_consumer_writes_readiness_key():
 
     mock_redis.set.assert_called_once_with(
         "graph-writer:repo-ready:my-repo:abc123", "1", ex=3600
+    )
+    mock_redis.xack.assert_called_once_with(
+        "stream:repo-indexed", "graph-writer-repo-indexed-group", b"1-0"
     )
 
 

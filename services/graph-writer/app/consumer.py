@@ -99,7 +99,7 @@ async def run_repo_indexed_consumer(settle_secs: float | None = None) -> None:
     consumer_name = f"graph-writer-{socket.gethostname()}"
     try:
         try:
-            await r.xgroup_create(STREAM_REPO_INDEXED, GROUP_REPO_INDEXED, id="$", mkstream=True)
+            await r.xgroup_create(STREAM_REPO_INDEXED, GROUP_REPO_INDEXED, id="0", mkstream=True)
         except redis.exceptions.ResponseError as exc:
             if "BUSYGROUP" not in str(exc):
                 raise
@@ -116,13 +116,13 @@ async def run_repo_indexed_consumer(settle_secs: float | None = None) -> None:
                     block=1000,
                 )
                 for _stream, events in (messages or []):
+                    if settle_secs > 0:
+                        await asyncio.sleep(settle_secs)
                     for msg_id, data in events:
                         try:
                             repo = (data.get(b"repo") or data.get("repo", b"")).decode()
                             commit_sha = (data.get(b"commit_sha") or data.get("commit_sha", b"")).decode()
                             if repo and commit_sha:
-                                if settle_secs > 0:
-                                    await asyncio.sleep(settle_secs)
                                 key = f"graph-writer:repo-ready:{repo}:{commit_sha}"
                                 await r.set(key, "1", ex=3600)
                                 logger.info("Wrote repo-ready key: %s", key)
