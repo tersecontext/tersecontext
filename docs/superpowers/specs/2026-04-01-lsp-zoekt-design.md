@@ -35,7 +35,11 @@ Python (consistent with other ingestion services).
 
 ### Trigger
 
-Consumes `stream:repo-indexed` — a new Redis stream event emitted by repo-watcher when a repo clone or update completes. Workspace-level trigger (not file-by-file) because language servers need full project context.
+Consumes `stream:repo-indexed` — a new Redis stream event emitted by repo-watcher. Consumer group: `lsp-indexer-group`. Create with `XGROUP CREATE stream:repo-indexed lsp-indexer-group $ MKSTREAM` on startup; handle `BUSYGROUP` error gracefully (group already exists).
+
+Workspace-level trigger (not file-by-file) because language servers need full project context.
+
+**lsp-indexer must wait for graph-writer to finish writing nodes before running LSP**, otherwise the node resolver lookup returns no matches for newly added files. Ordering is enforced via a readiness check at index time: before starting the LSP session, lsp-indexer polls Neo4j until the node count for the repo matches the file count reported in the `stream:repo-indexed` event payload (or a 60s timeout elapses, after which it proceeds on best-effort). The `stream:repo-indexed` event must therefore include `{"repo": str, "path": str, "node_count": int}` so the lsp-indexer has a target to wait for.
 
 ### Language Server Configuration
 
@@ -67,12 +71,16 @@ Language servers are configured via a `LANGUAGE_SERVERS` env var — a JSON map 
 
 ### Neo4j Edge Writes
 
+Only write edges when both nodes already exist (graph-writer owns the node lifecycle — lsp-indexer must not auto-create stub nodes):
+
 ```cypher
-MERGE (a:Node {stable_id: $src})
-MERGE (b:Node {stable_id: $tgt})
+MATCH (a:Node {stable_id: $src, active: true})
+MATCH (b:Node {stable_id: $tgt, active: true})
 MERGE (a)-[r:CALLS]->(b)
 SET r.source = 'lsp', r.confirmed_at = datetime()
 ```
+
+If either MATCH returns no rows the edge is silently skipped — the readiness wait (see Trigger section) minimises missed nodes; any that remain unresolved will be picked up on the next scheduled re-index.
 
 New `source` value: `'lsp'` — sits alongside existing `'static'`, `'dynamic'`, `'confirmed'`, `'conflict'`. No changes needed to graph-enricher's conflict detector.
 
@@ -92,7 +100,7 @@ New `source` value: `'lsp'` — sits alongside existing `'static'`, `'dynamic'`,
 | `NEO4J_USER` | `neo4j` | Neo4j username |
 | `NEO4J_PASSWORD` | (required) | Neo4j password |
 | `REPOS_DIR` | (required) | Path to mounted repos |
-| `LANGUAGE_SERVERS` | `{}` | JSON map of ext → server command |
+| `LANGUAGE_SERVERS` | `{"py":["pyright-langserver","--stdio"],"go":["gopls"],"ts":["typescript-language-server","--stdio"]}` | JSON map of ext → server command |
 | `PORT` | `8098` | HTTP listen port |
 
 ### Service Structure
@@ -125,13 +133,13 @@ Go (consistent with retrieval-path services; zoekt is a Go project).
 
 ### Triggers
 
-- `stream:repo-indexed` — full index of the repo directory
-- `stream:file-changed` — debounced (100ms window) per-repo re-index of affected shard
+- `stream:repo-indexed` — full index of the repo directory. Consumer group: `zoekt-indexer-group`. Create with `XGROUP CREATE stream:repo-indexed zoekt-indexer-group $ MKSTREAM` on startup; handle `BUSYGROUP` gracefully.
+- `stream:file-changed` — debounced (100ms window) per-repo re-index of affected shard. Consumer group: `zoekt-file-watcher-group`.
 
 ### Indexing Flow
 
-1. On `stream:repo-indexed`: run `zoekt-index -index $ZOEKT_INDEX_DIR $REPOS_DIR/{repo}`
-2. On `stream:file-changed`: debounce per repo, then re-index repo shard
+1. On `stream:repo-indexed`: invoke `zoekt-index` via `exec.Command` with explicit string substitution — **do not rely on shell expansion**. Construct the path in Go: `repoPath := filepath.Join(os.Getenv("REPOS_DIR"), repo)`, then `exec.Command("zoekt-index", "-index", indexDir, repoPath)`.
+2. On `stream:file-changed`: debounce per repo, then re-index repo shard using the same exec pattern
 3. Index shards written to shared `zoekt-index` Docker volume
 
 Repos are indexed with their name as the zoekt repository identifier, so search results carry `repo` in the payload.
@@ -175,7 +183,7 @@ services/zoekt-indexer/
 
 ### What Changes
 
-`neo4j.go` is replaced by `zoekt.go`. All other files (`retriever.go`, `rrf.go`, `qdrant.go`, `server.go`) are unchanged.
+`neo4j.go` is replaced by `zoekt.go`. `retriever.go` is updated at the `buildFullTextQuery` call site (that function is removed along with `neo4j.go` — `retriever.go` must pass `intent.Keywords` and `intent.Symbols` directly to `ZoektSearcher.Search` rather than pre-building an OR-joined query string). `rrf.go`, `qdrant.go`, and `server.go` are unchanged.
 
 ### New File: zoekt.go
 
@@ -196,14 +204,18 @@ type ZoektSearcher struct {
    {"Q": "sym:AuthService OR authenticate", "Opts": {"Repo": "test-repo", "MaxMatchCount": 50}}
    ```
 3. Receive file+line matches from zoekt
-4. Resolve to Neo4j `stable_id`s via batched Cypher:
+4. Resolve to Neo4j `stable_id`s via batched Cypher. For each file+line, multiple nodes may match due to nested scopes (e.g., a method inside a class both have overlapping line ranges). Use the narrowest enclosing node (smallest `end_line - start_line`) as the tiebreaker:
    ```cypher
    UNWIND $matches AS m
    MATCH (n:Node {repo: $repo, file_path: m.file, active: true})
    WHERE n.start_line <= m.line AND n.end_line >= m.line
-   RETURN n.stable_id, n.name, n.type, m.score AS zoekt_score
+   WITH n, m, (n.end_line - n.start_line) AS span
+   ORDER BY span ASC
+   WITH m.line AS line, m.file AS file, m.score AS zoekt_score,
+        head(collect(n)) AS n
+   RETURN n.stable_id, n.name, n.type, zoekt_score
    ```
-5. Deduplicate by `stable_id` (multiple line hits in same node → take max zoekt_score)
+5. Deduplicate by `stable_id` across all matches (multiple line hits in same node → take max zoekt_score)
 6. Return `[]RankedNode` sorted by zoekt_score descending
 
 Neo4j is retained in the dual-retriever for the file→node resolution lookup only. `NEO4J_USER` and `NEO4J_PASSWORD` env vars remain. The `Neo4jSearcher` struct and `buildFullTextQuery` function are removed.
@@ -249,7 +261,7 @@ lsp-indexer:
     - NEO4J_USER
     - NEO4J_PASSWORD
     - REPOS_DIR
-    - LANGUAGE_SERVERS
+    - LANGUAGE_SERVERS={"py":["pyright-langserver","--stdio"],"go":["gopls"],"ts":["typescript-language-server","--stdio"]}
   depends_on: [redis, neo4j]
   networks: [tersecontext]
 
@@ -261,15 +273,23 @@ volumes:
 
 ### New Redis Stream Event
 
-`stream:repo-indexed` — emitted by repo-watcher when a repo clone or update completes. repo-watcher requires a one-line addition to emit this event. Both `lsp-indexer` and `zoekt-indexer` consume it as independent consumer groups.
+`stream:repo-indexed` — emitted by repo-watcher when a repo clone or update completes. The event payload is `{"repo": str, "path": str, "node_count": int}` where `node_count` is the number of source files in the repo (used by lsp-indexer's readiness wait).
+
+repo-watcher change required: after completing a clone or pull and emitting the final `stream:file-changed` events for the commit, emit one `XADD stream:repo-indexed * repo {name} path {path} node_count {n}`. This is more than a one-liner — it requires counting source files and determining the right point in the watcher loop to fire (after all file-changed events for the commit have been emitted).
+
+Both `lsp-indexer` and `zoekt-indexer` consume it as independent consumer groups (`lsp-indexer-group`, `zoekt-indexer-group`).
 
 ### Neo4j Migration
 
-Remove `CREATE FULLTEXT INDEX node_search` from graph-writer startup. Drop existing index:
+Remove the `CREATE FULLTEXT INDEX node_search` statement from `docker/neo4j-init.cypher` (this is where the index is actually created — not in graph-writer startup). Drop the existing index if present:
 
 ```cypher
 DROP INDEX node_search IF EXISTS
 ```
+
+### Migration: Existing symbol-resolver Edges
+
+Edges written by symbol-resolver have `source='static'` or no `source` property. These are left in place. graph-enricher's conflict detector already handles the lifecycle: confirmed edges that are never re-observed will eventually downgrade. No purge is required. On the next re-index of each repo, lsp-indexer will write new `source='lsp'` edges for the same cross-file relationships.
 
 ---
 
@@ -292,9 +312,11 @@ DROP INDEX node_search IF EXISTS
 - [ ] `zoekt-indexer`: on `stream:file-changed`, debounces and re-indexes affected shard
 - [ ] `dual-retriever`: zoekt path replaces Neo4j full-text path, `GraphSearcher` interface unchanged
 - [ ] `dual-retriever`: zoekt file+line results resolved to Neo4j `stable_id`s correctly
-- [ ] `repo-watcher`: emits `stream:repo-indexed` on clone/update completion
-- [ ] `graph-writer`: `node_search` fulltext index creation removed
+- [ ] `repo-watcher`: emits `stream:repo-indexed` (with `node_count`) after all file-changed events for a commit are emitted
+- [ ] `docker/neo4j-init.cypher`: `node_search` fulltext index creation removed
 - [ ] `symbol-resolver`: removed from docker-compose
+- [ ] `dual-retriever`: `retriever.go` updated to pass keywords/symbols directly to `ZoektSearcher` (no `buildFullTextQuery` call)
+- [ ] Migration: existing symbol-resolver edges left in place (no purge needed)
 - [ ] All new services: `/health`, `/ready`, `/metrics` return 200
 - [ ] All new services: Dockerfile builds cleanly
 - [ ] All new services: unit tests pass
