@@ -288,7 +288,9 @@ volumes:
 
 `stream:repo-indexed` — emitted by repo-watcher when a repo clone or update completes. The event payload is `{"repo": str, "path": str, "node_count": int}` where `node_count` is the number of source files in the repo (used by lsp-indexer's readiness wait).
 
-repo-watcher change required: after completing a clone or pull and emitting the final `stream:file-changed` events for the commit, emit one `XADD stream:repo-indexed * repo {name} path {path} node_count {n}`. This is more than a one-liner — it requires counting source files and determining the right point in the watcher loop to fire (after all file-changed events for the commit have been emitted).
+Payload: `{"repo": str, "path": str, "commit_sha": str}`. The `commit_sha` is required by lsp-indexer's readiness wait to construct the Redis key `graph-writer:repo-ready:{repo}:{commit_sha}`.
+
+repo-watcher change required: after completing a clone or pull and emitting the final `stream:file-changed` events for the commit, emit one `XADD stream:repo-indexed * repo {name} path {path} commit_sha {sha}`. This is more than a one-liner — it requires tracking the commit SHA through the watcher loop and determining the right point to fire (after all file-changed events for the commit have been emitted).
 
 Both `lsp-indexer` and `zoekt-indexer` consume it as independent consumer groups (`lsp-indexer-group`, `zoekt-indexer-group`).
 
@@ -330,7 +332,7 @@ Edges written by symbol-resolver have `source='static'` or no `source` property.
 - [ ] `lsp-indexer`: Python, Go, TypeScript supported
 - [ ] `zoekt-indexer`: on `stream:repo-indexed`, indexes repo into zoekt corpus
 - [ ] `zoekt-indexer`: on `stream:file-changed`, debounces and re-indexes affected shard
-- [ ] `dual-retriever`: zoekt path replaces Neo4j full-text path, `GraphSearcher` interface unchanged
+- [ ] `dual-retriever`: zoekt path replaces Neo4j full-text path, `GraphSearcher` interface updated to `Search(ctx, keywords, symbols []string, repo string, limit int)`
 - [ ] `dual-retriever`: zoekt file+line results resolved to Neo4j `stable_id`s correctly
 - [ ] `repo-watcher`: emits `stream:repo-indexed` (with `commit_sha`) after all file-changed events for a commit are emitted
 - [ ] `graph-writer`: writes `graph-writer:repo-ready:{repo}:{commit_sha}` to Redis after flushing all nodes for a commit
