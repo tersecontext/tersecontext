@@ -587,7 +587,7 @@ services:
 
   zoekt-indexer:
     build: ./services/zoekt-indexer
-    ports: ["8099:8099"]
+    ports: ["8102:8102"]
     volumes:
       - zoekt-index:/data/index
       - "${REPOS_DIR}:/repos:ro"
@@ -601,7 +601,7 @@ services:
 
   lsp-indexer:
     build: ./services/lsp-indexer
-    ports: ["8098:8098"]
+    ports: ["8101:8101"]
     volumes:
       - "${REPOS_DIR}:/repos:ro"
     environment:
