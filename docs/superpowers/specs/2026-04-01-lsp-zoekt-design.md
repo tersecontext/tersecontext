@@ -39,7 +39,7 @@ Consumes `stream:repo-indexed` — a new Redis stream event emitted by repo-watc
 
 Workspace-level trigger (not file-by-file) because language servers need full project context.
 
-**lsp-indexer must wait for graph-writer to finish writing nodes before running LSP**, otherwise the node resolver lookup returns no matches for newly added files. Ordering is enforced via a readiness check at index time: before starting the LSP session, lsp-indexer polls Neo4j until the node count for the repo matches the file count reported in the `stream:repo-indexed` event payload (or a 60s timeout elapses, after which it proceeds on best-effort). The `stream:repo-indexed` event must therefore include `{"repo": str, "path": str, "node_count": int}` so the lsp-indexer has a target to wait for.
+**lsp-indexer must wait for graph-writer to finish writing nodes before running LSP**, otherwise the node resolver lookup returns no matches for newly added files. Ordering is enforced via a Redis marker written by graph-writer after it finishes processing all `stream:parsed-file` events for a commit: `SET graph-writer:repo-ready:{repo}:{commit_sha} 1 EX 3600`. Before starting the LSP session, lsp-indexer polls for this key (1s interval, 60s timeout; proceeds on best-effort if timeout elapses). The `stream:repo-indexed` event payload must therefore include `commit_sha` so lsp-indexer knows which key to wait for: `{"repo": str, "path": str, "commit_sha": str}`. graph-writer requires a small addition: after flushing all nodes for a commit, write the readiness marker to Redis.
 
 ### Language Server Configuration
 
@@ -134,7 +134,7 @@ Go (consistent with retrieval-path services; zoekt is a Go project).
 ### Triggers
 
 - `stream:repo-indexed` — full index of the repo directory. Consumer group: `zoekt-indexer-group`. Create with `XGROUP CREATE stream:repo-indexed zoekt-indexer-group $ MKSTREAM` on startup; handle `BUSYGROUP` gracefully.
-- `stream:file-changed` — debounced (100ms window) per-repo re-index of affected shard. Consumer group: `zoekt-file-watcher-group`.
+- `stream:file-changed` — debounced (100ms window) per-repo re-index of affected shard. Consumer group: `zoekt-file-watcher-group`. Create with `XGROUP CREATE stream:file-changed zoekt-file-watcher-group $ MKSTREAM` on startup; handle `BUSYGROUP` gracefully.
 
 ### Indexing Flow
 
@@ -183,7 +183,19 @@ services/zoekt-indexer/
 
 ### What Changes
 
-`neo4j.go` is replaced by `zoekt.go`. `retriever.go` is updated at the `buildFullTextQuery` call site (that function is removed along with `neo4j.go` — `retriever.go` must pass `intent.Keywords` and `intent.Symbols` directly to `ZoektSearcher.Search` rather than pre-building an OR-joined query string). `rrf.go`, `qdrant.go`, and `server.go` are unchanged.
+`neo4j.go` is replaced by `zoekt.go`. `retriever.go` is updated at the `buildFullTextQuery` call site and the `GraphSearcher` interface changes. `rrf.go`, `qdrant.go`, and `server.go` are unchanged.
+
+### Updated GraphSearcher Interface
+
+`buildFullTextQuery` is removed along with `neo4j.go`. The `GraphSearcher` interface signature changes to pass keywords and symbols separately so `ZoektSearcher` can apply different query strategies to each:
+
+```go
+type GraphSearcher interface {
+    Search(ctx context.Context, keywords []string, symbols []string, repo string, limit int) ([]RankedNode, error)
+}
+```
+
+`retriever.go` is updated to call `r.graph.Search(ctx, intent.Keywords, intent.Symbols, repo, limit)` directly, removing the `buildFullTextQuery` call. The `GraphSearcher` interface is defined in `zoekt.go` (replacing the declaration in `neo4j.go`).
 
 ### New File: zoekt.go
 
@@ -247,6 +259,7 @@ zoekt-indexer:
     - REDIS_URL
     - REPOS_DIR
     - ZOEKT_INDEX_DIR=/data/index
+    - ZOEKT_URL=http://zoekt-webserver:6070
   depends_on: [redis, zoekt-webserver]
   networks: [tersecontext]
 
@@ -261,7 +274,7 @@ lsp-indexer:
     - NEO4J_USER
     - NEO4J_PASSWORD
     - REPOS_DIR
-    - LANGUAGE_SERVERS={"py":["pyright-langserver","--stdio"],"go":["gopls"],"ts":["typescript-language-server","--stdio"]}
+    - 'LANGUAGE_SERVERS={"py":["pyright-langserver","--stdio"],"go":["gopls"],"ts":["typescript-language-server","--stdio"]}'
   depends_on: [redis, neo4j]
   networks: [tersecontext]
 
@@ -281,11 +294,18 @@ Both `lsp-indexer` and `zoekt-indexer` consume it as independent consumer groups
 
 ### Neo4j Migration
 
-Remove the `CREATE FULLTEXT INDEX node_search` statement from `docker/neo4j-init.cypher` (this is where the index is actually created — not in graph-writer startup). Drop the existing index if present:
+Remove the `CREATE FULLTEXT INDEX node_search` statement from `docker/neo4j-init.cypher` (this is where the index is actually created — not in graph-writer startup).
 
-```cypher
-DROP INDEX node_search IF EXISTS
+For existing deployments where the index already exists, `docker/neo4j-init.cypher` does not re-run. Drop the index via a one-time migration script `scripts/migrate_drop_node_search_index.py`:
+
+```python
+from neo4j import GraphDatabase
+driver = GraphDatabase.driver(NEO4J_URL, auth=(NEO4J_USER, NEO4J_PASSWORD))
+with driver.session() as s:
+    s.run("DROP INDEX node_search IF EXISTS")
 ```
+
+Run once against any existing deployment before deploying the new services. The index being absent is harmless on fresh deployments (the `IF EXISTS` guard makes the statement safe to re-run).
 
 ### Migration: Existing symbol-resolver Edges
 
@@ -312,11 +332,13 @@ Edges written by symbol-resolver have `source='static'` or no `source` property.
 - [ ] `zoekt-indexer`: on `stream:file-changed`, debounces and re-indexes affected shard
 - [ ] `dual-retriever`: zoekt path replaces Neo4j full-text path, `GraphSearcher` interface unchanged
 - [ ] `dual-retriever`: zoekt file+line results resolved to Neo4j `stable_id`s correctly
-- [ ] `repo-watcher`: emits `stream:repo-indexed` (with `node_count`) after all file-changed events for a commit are emitted
+- [ ] `repo-watcher`: emits `stream:repo-indexed` (with `commit_sha`) after all file-changed events for a commit are emitted
+- [ ] `graph-writer`: writes `graph-writer:repo-ready:{repo}:{commit_sha}` to Redis after flushing all nodes for a commit
 - [ ] `docker/neo4j-init.cypher`: `node_search` fulltext index creation removed
 - [ ] `symbol-resolver`: removed from docker-compose
 - [ ] `dual-retriever`: `retriever.go` updated to pass keywords/symbols directly to `ZoektSearcher` (no `buildFullTextQuery` call)
 - [ ] Migration: existing symbol-resolver edges left in place (no purge needed)
+- [ ] Migration: `scripts/migrate_drop_node_search_index.py` run against existing deployments before rollout
 - [ ] All new services: `/health`, `/ready`, `/metrics` return 200
 - [ ] All new services: Dockerfile builds cleanly
 - [ ] All new services: unit tests pass
