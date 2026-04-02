@@ -44,7 +44,10 @@ async def test_consumer_proceeds_after_timeout():
         await process_message(
             mock_redis, b"my-repo", b"/repos/my-repo", b"abc123",
             language_servers={}, driver=MagicMock(),
-            poll_interval=0, poll_timeout=0,  # zero timeout — proceeds immediately
+            poll_interval=999,   # large interval so only one attempt is made
+            poll_timeout=0.001,  # very short timeout — deadline expires after first poll
         )
 
     assert called_with == ["my-repo"]
+    # r.get should have been called at least once before timeout
+    mock_redis.get.assert_called_with("graph-writer:repo-ready:my-repo:abc123")

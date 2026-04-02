@@ -43,7 +43,8 @@ async def process_message(
             logger.info("Readiness key found: %s", ready_key)
             break
         if poll_interval > 0:
-            await asyncio.sleep(poll_interval)
+            remaining = deadline - time.monotonic()
+            await asyncio.sleep(min(poll_interval, max(remaining, 0)))
         else:
             break
     else:
@@ -88,6 +89,9 @@ async def run_consumer(language_servers: dict, driver) -> None:
                             raise
                         except Exception as exc:
                             logger.error("Consumer error msg=%s: %s", msg_id, exc)
+                            # Always ACK even on failure: lsp-indexer is best-effort; re-queuing
+                            # would cause infinite retries since the root cause won't resolve.
+                            # The next repo update will trigger a fresh index run.
                             await r.xack(STREAM, GROUP, msg_id)
             except asyncio.CancelledError:
                 raise
