@@ -1,0 +1,29 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: tersecontext
+    static_configs:
+      - targets:
+          - query-understander:8080
+          - embedder:8080
+          - vector-writer:8080
+          - parser:8080
+          - graph-writer:8080
+          - graph-enricher:8080
+          - repo-watcher:8080
+          - entrypoint-discoverer:8080
+          - instrumenter:8080
+          - trace-runner:8080
+          - trace-normalizer:8080
+          - spec-generator:8080
+          - perf-tracker:8080
+          - dual-retriever:8087
+          - subgraph-expander:8088
+          - serializer:8089
+          - api-gateway:8090
+          - go-instrumenter:8098
+          - go-trace-runner:8099
+          - zoekt-indexer:8102
+          - lsp-indexer:8101
