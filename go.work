@@ -1,6 +1,4 @@
-go 1.24.0
-
-toolchain go1.24.1
+go 1.24.1
 
 use (
 	./services/api-gateway
@@ -10,4 +8,5 @@ use (
 	./services/serializer
 	./services/subgraph-expander
 	./services/tracert
+	./services/zoekt-indexer
 )
