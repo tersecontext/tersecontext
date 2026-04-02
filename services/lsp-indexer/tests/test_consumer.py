@@ -44,8 +44,8 @@ async def test_consumer_proceeds_after_timeout():
         await process_message(
             mock_redis, b"my-repo", b"/repos/my-repo", b"abc123",
             language_servers={}, driver=MagicMock(),
-            poll_interval=999,   # large interval so only one attempt is made
-            poll_timeout=0.001,  # very short timeout — deadline expires after first poll
+            poll_interval=0,  # break after first poll — no sleep, no timing sensitivity
+            poll_timeout=1,   # generous timeout so the loop enters and polls once
         )
 
     assert called_with == ["my-repo"]
