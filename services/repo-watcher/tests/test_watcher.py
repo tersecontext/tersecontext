@@ -18,9 +18,11 @@ def _make_commit(repo, filename, content, message="update"):
 
 
 def _get_emitted_events(mock_redis):
-    """Extract FileChangedEvent dicts from all xadd calls on mock_redis."""
+    """Extract FileChangedEvent dicts from stream:file-changed xadd calls on mock_redis."""
     events = []
     for call in mock_redis.xadd.call_args_list:
+        if call[0][0] != "stream:file-changed":
+            continue
         payload = call[0][1]
         events.append(json.loads(payload["event"]))
     return events
@@ -98,3 +100,28 @@ def test_process_commit_added_file_emits_added_nodes(sample_repo):
     assert new_file_event["diff_type"] == "added"
     assert len(new_file_event["added_nodes"]) > 0
     assert new_file_event["changed_nodes"] == []
+
+
+def test_process_commit_emits_repo_indexed(sample_repo):
+    """After all file-changed events, process_commit emits one stream:repo-indexed entry."""
+    import subprocess
+    from unittest.mock import MagicMock
+    from app.watcher import process_commit
+
+    sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=sample_repo,
+        capture_output=True, text=True, check=True
+    ).stdout.strip()
+
+    mock_redis = MagicMock()
+    process_commit(mock_redis, str(sample_repo), None, sha)
+
+    # stream:repo-indexed should have exactly one xadd call for this stream
+    repo_indexed_calls = [
+        c for c in mock_redis.xadd.call_args_list
+        if c[0][0] == "stream:repo-indexed"
+    ]
+    assert len(repo_indexed_calls) == 1
+    payload = repo_indexed_calls[0][0][1]
+    assert payload["repo"] == sample_repo.name
+    assert payload["commit_sha"] == sha

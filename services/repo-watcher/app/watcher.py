@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 import redis
 
 from .differ import detect_language, get_all_files, get_changed_files, get_changed_nodes, git_show, parse_nodes
-from .emitter import emit_event
+from .emitter import emit_event, emit_repo_indexed
 from .models import FileChangedEvent
 
 logger = logging.getLogger(__name__)
@@ -73,6 +73,7 @@ def process_commit(
             )
             emit_event(r, event)
             events_emitted += 1
+        emit_repo_indexed(r, repo, repo_path, current_sha)
         return events_emitted, len(files)
 
     # Incremental diff
@@ -128,6 +129,7 @@ def process_commit(
         emit_event(r, event)
         events_emitted += 1
 
+    emit_repo_indexed(r, repo, repo_path, current_sha)
     return events_emitted, len(changed_files)
 
 
